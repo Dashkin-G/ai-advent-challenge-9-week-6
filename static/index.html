@@ -1,0 +1,518 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Локальная LLM</title>
+<link rel="icon" href="data:,">
+<style>
+  /* Стиль — «инженерный блокнот»: тёплая бумага в точку, тонкий контур и тень цвета индиго,
+     у каждого уровня сложности свой приглушённый цвет. */
+  :root {
+    --paper: #f4efe6; --card: #fffdf9; --ink: #23264d; --soft: #50557a;
+    --accent: #e5603b; --code: #f0ebe1; --think: #f1eefb; --live: #2f6fd8;
+    --err: #b42318; --err-bg: #fbe3dc;
+    --line: 2px solid var(--ink);
+    --display: Bahnschrift, "Segoe UI", sans-serif;
+    --q-size: 22px; --a-size: 22px;           /* размер вопроса и ответа — меняется регулятором */
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    display: flex; flex-direction: column; gap: 24px; padding: 24px 44px 34px;
+    color: var(--ink); font: 24px/1.45 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+    background: var(--paper) radial-gradient(rgba(35, 38, 77, .09) 1.3px, transparent 1.6px) 0 0 / 24px 24px;
+  }
+  button, select, textarea { font: inherit; color: inherit; }
+  button { cursor: pointer; }
+  button:disabled { cursor: default; opacity: .45; }
+  :focus-visible { outline: 3px dashed var(--ink); outline-offset: 3px; }
+  .out, .think div, .info-body { scrollbar-width: thin; scrollbar-color: var(--soft) transparent; }
+
+  /* Кнопка с жёсткой тенью: при нажатии вдавливается */
+  .press { --shade: var(--ink); border: var(--line); box-shadow: 3px 3px 0 var(--shade); transition: transform .08s, box-shadow .08s; }
+  .press:not(:disabled):hover { box-shadow: 4px 4px 0 var(--shade); }
+  .press:not(:disabled):active { transform: translate(2px, 2px); box-shadow: 1px 1px 0 var(--shade); }
+  .press:disabled { box-shadow: none; }
+
+  header { display: flex; align-items: center; gap: 16px; }
+  .logo { width: 46px; height: 46px; flex: none; }
+  h1 { margin: 0; font: 600 40px/1 var(--display); }
+  #engine { padding: 2px 10px; border: 2px solid rgba(35, 38, 77, .3); border-radius: 6px; color: var(--soft); font-size: 19px; }
+  #engine:empty { display: none; }
+  #sizes, #status {
+    display: flex; align-items: center; gap: 12px; padding: 7px 20px;
+    border: var(--line); border-radius: 10px; background: var(--card);
+  }
+  #sizes { margin-left: auto; gap: 8px; padding: 6px 14px; font-size: 20px; }
+  #sizes .aa { margin-right: 4px; font: 700 24px/1 var(--display); }
+  #sizes .gap { width: 2px; height: 28px; margin: 0 8px; background: rgba(35, 38, 77, .2); }
+  #sizes button {
+    width: 36px; height: 36px; border: 2px solid var(--ink); border-radius: 8px; background: var(--paper);
+    font: 700 22px/1 var(--display);
+  }
+  .dot { width: 14px; height: 14px; border-radius: 50%; background: var(--live); animation: live 2s infinite; }
+  @keyframes live { 0% { box-shadow: 0 0 0 0 rgba(47, 111, 216, .5); } 70%, 100% { box-shadow: 0 0 0 10px rgba(47, 111, 216, 0); } }
+  #status.bad { border-color: var(--err); background: var(--err-bg); color: var(--err); font-weight: 600; }
+  #status.bad .dot { background: var(--err); animation: none; }
+  #pick { padding: 0 6px; border: 2px solid var(--ink); border-radius: 8px; background: var(--card); font-weight: 700; }
+  #pick:disabled { appearance: none; padding: 0; border-color: transparent; background: none; opacity: 1; }
+
+  .bar { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; }
+  .help { position: relative; justify-self: start; }
+  .help-icon { width: 46px; height: 46px; border-radius: 50%; background: var(--card); font: 700 26px/1 var(--display); }
+  .tip {                                 /* мини-справка: видна, пока мышь над «?» */
+    display: none; position: absolute; left: 0; top: calc(100% + 12px); z-index: 10; width: 600px; padding: 16px 22px;
+    border: var(--line); border-radius: 12px; background: var(--card); box-shadow: 4px 4px 0 var(--ink);
+    font-size: 20px; line-height: 1.45;
+  }
+  .help:hover .tip, .help:focus-within .tip { display: block; }
+  .tip::before { content: ""; position: absolute; left: 0; right: 0; top: -16px; height: 16px; }   /* мышь доходит до справки */
+  .tip h3 { margin: 0 0 4px; font: 700 22px/1.3 var(--display); }
+  .tip h3 + p { margin: 0 0 6px; }
+  .tip ul { margin: 0 0 14px; padding-left: 22px; }
+  .tip ul:last-child { margin-bottom: 0; }
+  .tip svg { width: 18px; height: 18px; vertical-align: -3px; fill: none; stroke: currentColor; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; }
+
+  #all {
+    --shade: var(--accent); padding: 14px 50px; border-radius: 12px;
+    background: var(--ink); color: var(--card); font: 600 30px/1.2 var(--display); box-shadow: 5px 5px 0 var(--shade);
+  }
+  #all:not(:disabled):hover { box-shadow: 6px 6px 0 var(--shade); }
+  #all.stop { --shade: var(--ink); background: var(--card); color: var(--ink); }
+
+  main { flex: 1; min-height: 0; display: grid; grid-template-columns: repeat(3, 1fr); gap: 30px; }
+  .col {
+    display: flex; flex-direction: column; min-height: 0; overflow: hidden;
+    border: var(--line); border-radius: 14px; background: var(--card); box-shadow: 4px 4px 0 var(--ink);
+    transition: opacity .3s;
+  }
+  .col.wait { opacity: .5; border-style: dashed; box-shadow: none; }
+
+  .band {
+    position: relative; flex: none; display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    padding: 12px 16px 12px 22px; border-bottom: var(--line); background: var(--tone);
+  }
+  .col.run .band::after {               /* модель пишет — по нижней кромке бежит полоса */
+    content: ""; position: absolute; left: -30%; bottom: -3px; width: 30%; height: 4px;
+    background: var(--ink); animation: progress 1.4s ease-in-out infinite;
+  }
+  @keyframes progress { to { left: 100%; } }
+  .col.err .band { background: var(--err-bg); }
+  .level {                               /* в узкой колонке переносится на две строки */
+    flex: 1 1 auto; min-width: 0; font: 700 22px/1.1 var(--display); letter-spacing: .06em; text-transform: uppercase;
+  }
+  .col.done .level::after { content: " ✓"; }
+  .tools { flex: none; display: flex; align-items: center; gap: 12px; }
+  .clear, .mind { padding: 5px 14px; border-radius: 10px; background: var(--card); font-size: 21px; font-weight: 600; }
+  .mind[aria-pressed="true"] { background: var(--ink); color: var(--card); }
+  .play { width: 50px; height: 50px; border-radius: 50%; background: var(--card); font-size: 20px; }
+  .expand { display: grid; place-items: center; width: 50px; height: 50px; border-radius: 12px; background: var(--card); }
+  .expand svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; }
+  main.solo { grid-template-columns: 1fr; }               /* одна колонка на всю ширину */
+  main.solo .col:not(.wide) { display: none; }
+
+  .body { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 16px; padding: 18px 24px 20px; }
+  .q {
+    flex: none; min-height: 2.9em; padding: 10px 14px; border: 2px dashed rgba(35, 38, 77, .25); border-radius: 10px;
+    background: var(--paper); font-size: var(--q-size); font-weight: 600; line-height: 1.3; resize: none; field-sizing: content;
+  }
+  .q:focus { outline: none; border-style: solid; border-color: var(--ink); }
+
+  .out { flex: 1; min-height: 0; overflow-y: auto; }
+  .out.scrolled { mask-image: linear-gradient(transparent 0 14px, #000 60px); }   /* выше есть ещё текст */
+  .answer { white-space: pre-wrap; font-size: var(--a-size); }
+  .err .answer { color: var(--err); font-weight: 600; }
+  code, pre { font-family: Consolas, "Cascadia Mono", monospace; font-size: .85em; }
+  .answer pre { margin: 6px 0; padding: 10px 14px; border-radius: 10px; background: var(--code); white-space: pre-wrap; }
+  .think { margin-bottom: 14px; }
+  .think summary { cursor: pointer; font-weight: 700; }
+  .think div {
+    max-height: 240px; overflow-y: auto; margin-top: 8px; padding: 8px 14px; border-left: 3px solid var(--ink);
+    border-radius: 0 10px 10px 0; background: var(--think); color: var(--soft); white-space: pre-wrap;
+    font-size: calc(var(--a-size) * .875);
+  }
+
+  .foot { flex: none; padding-top: 14px; border-top: 2px solid rgba(35, 38, 77, .12); }
+  .metrics { display: flex; align-items: baseline; gap: 18px; min-height: 54px; color: var(--soft); }
+  .speed { color: var(--ink); font: 700 48px/1 var(--display); }
+  .speed small { font-size: 24px; font-weight: 600; }
+  .info summary { cursor: pointer; margin-top: 6px; color: var(--soft); font-size: 22px; }
+  .info-body {
+    max-height: 300px; overflow-y: auto; margin-top: 8px; padding: 12px 16px;
+    border: 2px solid rgba(35, 38, 77, .2); border-radius: 10px; background: var(--code);
+  }
+  /* Колонка на всю ширину: слева вопрос и ответ, справа скорость, ресурсы и запрос */
+  .col.wide .body {
+    display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); grid-template-rows: auto minmax(0, 1fr);
+    grid-template-areas: "q foot" "out foot"; gap: 16px 36px;
+  }
+  .col.wide .q { grid-area: q; }
+  .col.wide .out { grid-area: out; }
+  .col.wide .foot { grid-area: foot; overflow-y: auto; padding: 0 0 0 34px; border-top: none; border-left: 2px solid rgba(35, 38, 77, .12); }
+  .col.wide .info-body { max-height: none; }
+  .usage { display: grid; grid-template-columns: auto 1fr; gap: 6px 16px; margin-bottom: 14px; font-size: 20px; }
+  .usage[hidden] { display: none; }
+  .info pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 18px; }
+
+  @media (max-width: 1100px) {
+    body { height: auto; }
+    main { grid-template-columns: 1fr; }
+    .out { max-height: 50vh; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <svg class="logo" viewBox="0 0 54 54" aria-hidden="true">
+    <g stroke="#23264d" stroke-width="3" stroke-linecap="round">
+      <path d="M18 4v8M27 4v8M36 4v8M18 42v8M27 42v8M36 42v8M4 18h8M4 27h8M4 36h8M42 18h8M42 27h8M42 36h8"/>
+      <rect x="12" y="12" width="30" height="30" rx="5" fill="#e5603b"/>
+      <rect x="20" y="20" width="14" height="14" rx="2" fill="#f2d37a"/>
+    </g>
+  </svg>
+  <h1>Локальная LLM</h1>
+  <span id="engine"></span>
+  <div id="sizes" title="Размер текста">
+    <span class="aa">Aa</span>
+    <span>Вопрос</span>
+    <button data-size="q" data-step="-2" aria-label="Вопрос мельче">−</button>
+    <button data-size="q" data-step="2" aria-label="Вопрос крупнее">+</button>
+    <span class="gap"></span>
+    <span>Ответ</span>
+    <button data-size="a" data-step="-2" aria-label="Ответ мельче">−</button>
+    <button data-size="a" data-step="2" aria-label="Ответ крупнее">+</button>
+  </div>
+  <div id="status"><span class="dot"></span><select id="pick"></select><span id="where"></span></div>
+</header>
+
+<div class="bar">
+  <div class="help">
+    <button class="help-icon press" aria-label="Справка">?</button>
+    <div class="tip" role="tooltip">
+      <h3>Кнопка «думать»</h3>
+      <p>Модель сначала рассуждает, потом отвечает. Ход мысли виден над ответом.</p>
+      <ul>
+        <li>Точнее на задачах в несколько шагов.</li>
+        <li>Дольше: простой вопрос — 10–30 с вместо 0,5 с, задача про поезда — около 2 минут вместо 30 с.</li>
+        <li>В запрос к Ollama уходит <code>"think": true</code>, параметры генерации — модели по умолчанию.</li>
+      </ul>
+      <h3>Остальные кнопки</h3>
+      <ul>
+        <li>«очистить» — убрать ответ, вопрос остаётся</li>
+        <li>▶ — задать вопрос, ■ — остановить</li>
+        <li><svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg> — колонка на всю ширину</li>
+        <li>Вопрос можно изменить, Enter — отправить</li>
+      </ul>
+    </div>
+  </div>
+  <button id="all" class="press"></button>
+</div>
+<main></main>
+
+<template id="column">
+  <section class="col">
+    <div class="band">
+      <span class="level"></span>
+      <div class="tools">
+        <button class="clear press" title="Убрать ответ, вопрос остаётся">очистить</button>
+        <button class="mind press" aria-pressed="false" title="Сначала подумать, потом ответить">думать</button>
+        <button class="play press"></button>
+        <button class="expand press"></button>
+      </div>
+    </div>
+    <div class="body">
+      <textarea class="q" rows="2"></textarea>
+      <div class="out"><div class="answer"></div></div>
+      <div class="foot">
+        <div class="metrics"></div>
+        <details class="info" hidden>
+          <summary>Ресурсы, CLI и HTTP API</summary>
+          <div class="info-body"><div class="usage" hidden></div><pre></pre></div>
+        </details>
+      </div>
+    </div>
+  </section>
+</template>
+
+<script>
+// Три вопроса разной сложности: факт одним словом, объяснение, задача в несколько шагов.
+// tone — цвет уровня.
+const QUESTIONS = [
+  {level: 'Простой запрос', tone: '#f2d37a', text: 'Какая столица Японии? Ответь одним словом.'},
+  {level: 'Средний запрос', tone: '#a9cdee', text: 'Что такое токен в языковой модели? Объясни в двух-трёх предложениях.'},
+  {level: 'Сложный запрос', tone: '#c9bdf0', text: 'Из Москвы в 9:00 выехал поезд со скоростью 80 км/ч. В 10:00 навстречу ему из Твери выехал второй — 100 км/ч. Между городами 170 км. Во сколько поезда встретятся?'},
+];
+const PLAY = '▶︎', STOP = '■';
+const WIDE = '<svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>';
+const NARROW = '<svg viewBox="0 0 24 24"><path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"/></svg>';
+
+const $ = (s, root = document) => root.querySelector(s);
+const all = $('#all'), pick = $('#pick');
+let status = null;     // последний ответ /api/status
+let current = null;    // вопрос, на который модель отвечает сейчас: {col, controller}
+let batch = false;     // идут все три вопроса по очереди
+
+const num = (x, digits = 1) => x.toLocaleString('ru-RU', {maximumFractionDigits: digits});
+const secs = s => s < 10 ? `${num(s)} с` : s < 60 ? `${Math.round(s)} с`
+  : `${Math.floor(Math.round(s) / 60)} мин ${Math.round(s) % 60} с`;
+const plural = (n, [one, few, many]) => n % 10 === 1 && n % 100 !== 11 ? one
+  : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20) ? few : many;
+const tokens = n => `${num(n, 0)} ${plural(n, ['токен', 'токена', 'токенов'])}`;
+const speed = x => `<span class="speed">${num(x)}<small> токенов/сек</small></span>`;
+const gb = bytes => `${num(bytes / 2 ** 30)} ГБ`;
+
+// Размер текста вопроса (q) и ответа (a): шаг 2 px, выбор запоминается в браузере.
+const SIZE_LIMITS = {q: [16, 36], a: [16, 36]};
+const sizes = {q: 22, a: 22};
+try { Object.assign(sizes, JSON.parse(localStorage.getItem('sizes') || '{}')); } catch {}
+function applySizes() {
+  for (const [key, [low, high]] of Object.entries(SIZE_LIMITS)) {
+    sizes[key] = Math.min(high, Math.max(low, Number(sizes[key]) || 22));
+    document.documentElement.style.setProperty(`--${key}-size`, `${sizes[key]}px`);
+  }
+  for (const button of document.querySelectorAll('#sizes button')) {
+    const [low, high] = SIZE_LIMITS[button.dataset.size], value = sizes[button.dataset.size];
+    button.disabled = Number(button.dataset.step) < 0 ? value <= low : value >= high;
+  }
+  try { localStorage.setItem('sizes', JSON.stringify(sizes)); } catch {}
+}
+for (const button of document.querySelectorAll('#sizes button')) {
+  button.onclick = () => { sizes[button.dataset.size] += Number(button.dataset.step); applySizes(); };
+}
+applySizes();
+
+// Ответ модели — Markdown с формулами LaTeX. Показываем жирный, код, списки,
+// формулы переводим в обычный текст: 80 \text{ км} \times 2 → 80 км × 2.
+const esc = s => s.replace(/[&<>]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;'})[c]);
+const SYMBOLS = {times: '×', cdot: '·', div: '÷', approx: '≈', ne: '≠', neq: '≠', le: '≤', leq: '≤', ge: '≥',
+  geq: '≥', pm: '±', to: '→', rightarrow: '→', Rightarrow: '⇒', quad: ' ', qquad: ' ', ',': ' ', ';': ' ',
+  '%': '%', pi: 'π', infty: '∞', circ: '°', Delta: 'Δ', ldots: '…', cdots: '…'};
+const tex = s => s
+  .replace(/\\(?:text|mathrm|mathbf|textbf|operatorname)\{([^{}]*)\}/g, '$1')
+  .replace(/\\[dt]?frac\{([^{}]*)\}\{([^{}]*)\}/g, '$1/$2')
+  .replace(/\\sqrt\{([^{}]*)\}/g, '√$1')
+  .replace(/\^\{([^{}]*)\}|\^(\w)/g, (_, a, b) => `<sup>${a ?? b}</sup>`)
+  .replace(/_\{([^{}]*)\}|_(\w)/g, (_, a, b) => `<sub>${a ?? b}</sub>`)
+  .replace(/\\(?:left|right)\b/g, '')
+  .replace(/\\([a-zA-Z]+|[,;%])/g, (m, name) => SYMBOLS[name] ?? m)
+  .replace(/[{}]/g, '')
+  .replace(/ {2,}/g, ' ');
+const math = s => s
+  .replace(/\$\$([\s\S]+?)\$\$|\\\[([\s\S]+?)\\\]/g, (_, a, b) => tex(a ?? b).trim())
+  .replace(/\$\$([^$]*)$/, (_, a) => tex(a))                       // формула ещё печатается
+  .replace(/\\\(([\s\S]+?)\\\)|\$([^$\n]+?)\$/g, (_, a, b) => tex(a ?? b));
+const prose = s => math(esc(s))
+  .replace(/`([^`\n]+)`/g, '<code>$1</code>')
+  .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
+  .replace(/^#{1,6} +(.+)$/gm, '<b>$1</b>')
+  .replace(/^(\s*)[-*] +/gm, '$1• ')
+  .replace(/\*(\S[^*\n]*?)\*/g, '<i>$1</i>');
+const md = s => s.trim().split('```').map((part, i) => i % 2
+  ? `<pre>${esc(part.replace(/^[^\n]*\n?/, '').trimEnd())}</pre>`     // код; первая строка — язык
+  : prose(part.replace(/^\n/, '').replace(/\n$/, ''))).join('');
+
+const cols = QUESTIONS.map(q => {
+  const col = $('#column').content.firstElementChild.cloneNode(true);
+  col.style.setProperty('--tone', q.tone);
+  $('.level', col).textContent = q.level;
+  $('.q', col).value = q.text;
+  const mind = $('.mind', col);
+  mind.onclick = () => mind.setAttribute('aria-pressed', mind.getAttribute('aria-pressed') !== 'true');
+  $('.play', col).onclick = () => current ? current.controller.abort() : ask(col);
+  $('.clear', col).onclick = () => { clear(col); buttons(); };
+  $('.expand', col).onclick = () => solo(col.classList.contains('wide') ? null : col);
+  $('.out', col).onscroll = e => e.target.classList.toggle('scrolled', e.target.scrollTop > 0);
+  $('.q', col).onkeydown = e => {
+    if (e.key !== 'Enter' || e.shiftKey) return;
+    e.preventDefault();
+    if (!current && !batch) ask(col);
+  };
+  $('main').append(col);
+  return col;
+});
+solo(null);
+
+function solo(wide) {                  // wide — колонка на всю ширину, null — все три рядом
+  $('main').classList.toggle('solo', Boolean(wide));
+  for (const col of cols) {
+    const on = col === wide, button = $('.expand', col);
+    col.classList.toggle('wide', on);
+    $('.info', col).open = on;         // на всю ширину ресурсы видны сразу, в три колонки — свёрнуты
+    button.innerHTML = on ? NARROW : WIDE;
+    button.title = on ? 'Вернуть три колонки' : 'На всю ширину';
+  }
+}
+
+all.onclick = async () => {
+  if (current || batch) {
+    batch = false;
+    current?.controller.abort();
+    return;
+  }
+  solo(null);
+  batch = true;
+  cols.forEach(col => clear(col, 'wait'));
+  for (const col of cols) if (!batch || !await ask(col)) break;
+  cols.forEach(col => col.classList.contains('wait') && clear(col));
+  batch = false;
+  buttons();
+};
+
+function buttons() {
+  const ready = Boolean(status?.running && pick.value), busy = Boolean(current || batch);
+  all.textContent = busy ? `${STOP} Остановить` : `${PLAY} Задать все три вопроса`;
+  all.classList.toggle('stop', busy);
+  all.disabled = !busy && !ready;
+  for (const col of cols) {
+    const play = $('.play', col), empty = !$('.answer', col).textContent && !$('.metrics', col).textContent;
+    play.textContent = current?.col === col ? STOP : PLAY;
+    play.disabled = busy ? current?.col !== col : !ready;
+    $('.clear', col).disabled = batch || current?.col === col || empty;
+  }
+}
+
+function clear(col, state = '') {
+  col.classList.remove('wait', 'run', 'done', 'err');
+  if (state) col.classList.add(state);
+  $('.answer', col).innerHTML = '';
+  $('.out', col).classList.remove('scrolled');
+  $('.think', col)?.remove();
+  $('.metrics', col).innerHTML = '';
+  $('.info', col).hidden = true;
+  $('.usage', col).hidden = true;
+}
+
+async function refresh() {
+  try { status = await (await fetch('/api/status')).json(); } catch { status = null; }
+  const names = status?.models?.map(m => m.name) ?? [];
+  if (pick.dataset.names !== names.join()) {          // список моделей поменялся — пересобрать выбор
+    const keep = pick.value;
+    pick.dataset.names = names.join();
+    pick.replaceChildren(...names.map(n => new Option(n, n)));
+    pick.value = [keep, status?.default].find(n => names.includes(n)) ?? names[0] ?? '';
+  }
+  pick.disabled = names.length < 2;
+  const loaded = status?.loaded?.find(m => m.name === pick.value);
+  const device = !loaded ? '' : loaded.vram === 0 ? 'процессор'
+    : loaded.vram < 1 ? `видеокарта ${Math.round(loaded.vram * 100)} %` : 'видеокарта';
+  const problem = !status ? 'Нет связи с приложением'
+    : !status.running ? 'Ollama не запущен — откройте его из меню «Пуск»'
+    : !names.length ? `Модели нет — скачайте: ollama pull ${status.default}` : '';
+  $('#status').classList.toggle('bad', Boolean(problem));
+  pick.hidden = Boolean(problem);
+  $('#where').textContent = problem || (loaded ? `· в памяти · ${device}` : '· на диске');
+  $('#engine').textContent = status?.running ? `Ollama ${status.version}` : '';
+  buttons();
+}
+pick.onchange = refresh;
+refresh();
+setInterval(refresh, 3000);
+
+async function* lines(res) {           // ответ сервера — строки JSON
+  const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+  let rest = '';
+  for (let r; !(r = await reader.read()).done;) {
+    const parts = (rest + r.value).split('\n');
+    rest = parts.pop();
+    for (const part of parts) if (part.trim()) yield JSON.parse(part);
+  }
+}
+
+function showRequest(col, {url, body}) {
+  const question = body.messages.at(-1).content.replace(/"/g, '\\"');
+  const json = '{\n' + Object.entries(body).map(([k, v]) => `  "${k}": ${JSON.stringify(v)}`).join(',\n') + '\n}';
+  $('.info pre', col).textContent =
+    `CLI\nollama run ${body.model} --think=${body.think} "${question}"\n\nHTTP\nPOST ${url}\n${json}`;
+  $('.info', col).hidden = false;
+}
+
+function showUsage(col, u) {           // что потратил компьютер за этот ответ
+  const threads = Math.round(u.model_cpu / 100 * u.threads);
+  const usage = $('.usage', col);
+  usage.innerHTML =
+    `<b>Процессор</b><span>модель ${num(u.model_cpu, 0)} % (≈ ${threads} из ${u.threads} потоков), всего ${num(u.cpu, 0)} %</span>`
+    + `<b>Память</b><span>модель ${gb(u.model_ram)}, всего ${num(u.ram_used / 2 ** 30)} из ${gb(u.ram_total)}</span>`
+    + `<b>Видеокарта</b><span>${u.gpu ? `модель ${gb(u.gpu)}` : 'не используется'}</span>`
+    + `<b>Машина</b><span>${esc(u.cpu_name)}, ${u.cores} ${plural(u.cores, ['ядро', 'ядра', 'ядер'])}, `
+      + `${u.threads} ${plural(u.threads, ['поток', 'потока', 'потоков'])}</span>`;
+  usage.hidden = false;
+}
+
+async function ask(col) {
+  const question = $('.q', col).value.trim();
+  if (!question) return false;
+  clear(col, 'run');
+  const controller = new AbortController();
+  current = {col, controller};
+  buttons();
+
+  const out = $('.out', col), answer = $('.answer', col), metrics = $('.metrics', col);
+  const started = performance.now(), since = t => (performance.now() - t) / 1000;
+  let text = '', thought = '', count = 0, first = 0, think = null, thinkStarted = 0, ok = false;
+  const live = () => {                  // счётчики, пока модель пишет
+    metrics.innerHTML = count
+      ? `${speed(count > 1 ? (count - 1) / since(first) : 0)}<span>${tokens(count)} · ${secs(since(started))}</span>`
+      : `<span>${secs(since(started))}</span>`;
+    if (think && !think.dataset.done) $('summary', think).textContent = `Думает · ${secs(since(thinkStarted))}`;
+  };
+  const timer = setInterval(live, 250);
+  try {
+    const res = await fetch('/api/ask', {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, signal: controller.signal,
+      body: JSON.stringify({question, model: pick.value, think: $('.mind', col).getAttribute('aria-pressed') === 'true'}),
+    });
+    if (!res.ok) throw new Error((await res.json()).detail ?? `Ошибка ${res.status}`);
+    for await (const event of lines(res)) {
+      if (event.type === 'request') showRequest(col, event);
+      else if (event.type === 'think') {
+        count++; first ||= performance.now();
+        if (!think) {
+          think = Object.assign(document.createElement('details'), {className: 'think', open: true});
+          think.innerHTML = '<summary>Думает</summary><div></div>';
+          out.prepend(think);
+          thinkStarted = performance.now();
+        }
+        const box = $('div', think);
+        thought += event.text;
+        box.innerHTML = md(thought);
+        box.scrollTop = box.scrollHeight;
+      } else if (event.type === 'text') {
+        count++; first ||= performance.now();
+        if (think && !think.dataset.done) {
+          think.dataset.done = '1';
+          think.open = false;
+          $('summary', think).textContent = `Ход мысли · ${secs(since(thinkStarted))}`;
+        }
+        text += event.text;
+        answer.innerHTML = md(text);
+        out.scrollTop = out.scrollHeight;
+      } else if (event.type === 'done') {
+        ok = true;
+        clearInterval(timer);
+        const load = event.load > 1 ? ` · загрузка ${secs(event.load)}` : '';
+        metrics.innerHTML = `${speed(event.speed)}<span>${tokens(event.tokens)} · ${secs(event.seconds)}${load}</span>`;
+      } else if (event.type === 'usage') showUsage(col, event);
+      else if (event.type === 'error') throw new Error(event.text);
+    }
+    if (!ok) throw new Error('Ответ оборвался');
+    col.classList.replace('run', 'done');
+  } catch (e) {
+    clearInterval(timer);
+    if (e.name === 'AbortError') {
+      col.classList.remove('run');
+      metrics.innerHTML = `<span>остановлено · ${secs(since(started))}</span>`;
+    } else {
+      col.classList.replace('run', 'err');
+      answer.textContent = e.message;
+    }
+  } finally {
+    clearInterval(timer);
+    current = null;
+    buttons();
+  }
+  return ok;
+}
+</script>
+</body>
+</html>

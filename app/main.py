@@ -46,7 +46,7 @@ async def ask(body: Ask):
         # Первый снимок ресурсов — в потоке: поиск процессов Ollama занимает до полсекунды.
         usage = asyncio.create_task(asyncio.to_thread(machine.Usage))
         try:
-            async for event in llm.ask(body.model, question, body.think):
+            async for event in llm.ask(body.model, [{"role": "user", "content": question}], body.think):
                 yield _line(event)
                 if event["type"] == "done":
                     spent = await asyncio.to_thread((await usage).result)

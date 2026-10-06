@@ -39,11 +39,11 @@ async def status() -> dict:
     }
 
 
-async def ask(model: str, question: str, think: bool) -> AsyncIterator[dict]:
-    """Ответ по кусочкам. События: request — что ушло в Ollama; think — ход мысли;
-    text — ответ; done — счётчики. Ошибка — LLMError."""
-    body = {"model": model, "messages": [{"role": "user", "content": question}],
-            "think": think, "stream": True}
+async def ask(model: str, messages: list[dict], think: bool) -> AsyncIterator[dict]:
+    """Ответ по кусочкам на диалог: messages — [{role, content, images?}], последнее — вопрос.
+    События: request — что ушло в Ollama; think — ход мысли; text — ответ; done — счётчики.
+    Ошибка — LLMError."""
+    body = {"model": model, "messages": messages, "think": think, "stream": True}
     if not think:
         # Рекомендация Qwen для ответа без размышления; с размышлением — настройки модели.
         body["options"] = {"temperature": 0.7, "top_p": 0.8}

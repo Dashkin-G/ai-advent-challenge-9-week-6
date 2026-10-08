@@ -2,7 +2,8 @@
 
 Ollama — сервер на этом же компьютере. Вопрос уходит POST-запросом на /api/chat,
 ответ приходит потоком: строка JSON на каждый кусочек текста, в последней —
-сколько токенов сгенерировано и сколько это заняло.
+сколько токенов сгенерировано и сколько это заняло. Векторы для поиска по индексу
+считает модель эмбеддингов там же — POST /api/embed.
 """
 import json
 from collections.abc import AsyncIterator
@@ -13,7 +14,7 @@ from . import config
 
 
 class LLMError(RuntimeError):
-    """Ошибка вызова модели — уже человеческими словами."""
+    """Ошибка на пути к ответу (Ollama, облако, индекс) — уже человеческими словами."""
 
 
 def _client(read: float | None = 5) -> httpx.AsyncClient:
@@ -31,9 +32,11 @@ async def status() -> dict:
             loaded = (await client.get("/api/ps")).json()["models"]
     except httpx.HTTPError:
         return {"running": False}
+    # bge-m3 умеет только векторы для поиска — в выбор модели для ответа не попадает.
+    chat = [m for m in models if "completion" in m.get("capabilities", ["completion"])]
     return {
         "running": True, "version": version, "default": config.MODEL,
-        "models": [{"name": m["name"], "size": m["size"]} for m in models],
+        "models": [{"name": m["name"], "size": m["size"]} for m in chat],
         # vram — какая доля модели на видеокарте: 0 — считает процессор.
         "loaded": [{"name": m["name"], "size": m["size"], "vram": round(m["size_vram"] / m["size"], 2)} for m in loaded],
     }
@@ -71,6 +74,29 @@ async def ask(model: str, messages: list[dict], think: bool) -> AsyncIterator[di
         raise LLMError("Ollama не запущен") from e
     except httpx.HTTPError as e:
         raise LLMError(f"Ollama не отвечает: {e.__class__.__name__}") from e
+
+
+async def embed(texts: list[str]) -> list[list[float]]:
+    """Векторы текстов от модели эмбеддингов (bge-m3) — по ним ищется ближайшее в индексе."""
+    try:
+        async with _client(read=60) as client:
+            response = await client.post("/api/embed", json={"model": config.EMBED_MODEL, "input": texts})
+    except httpx.ConnectError as e:
+        raise LLMError("Ollama не запущен") from e
+    except httpx.HTTPError as e:
+        raise LLMError(f"Ollama не отвечает: {e.__class__.__name__}") from e
+    if response.status_code != 200:
+        raise LLMError(_explain(response, config.EMBED_MODEL))
+    return response.json()["embeddings"]
+
+
+async def load(model: str) -> None:
+    """Загрузить модель в память заранее: запрос без текста только загружает её."""
+    try:
+        async with _client(read=None) as client:
+            await client.post("/api/generate", json={"model": model})
+    except httpx.HTTPError:
+        pass                    # не запущен Ollama — скажет первый же вопрос
 
 
 def _explain(response: httpx.Response, model: str) -> str:

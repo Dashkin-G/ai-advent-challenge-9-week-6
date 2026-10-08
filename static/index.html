@@ -40,6 +40,10 @@
   h1 { margin: 0; font: 600 40px/1 var(--display); }
   #engine { padding: 2px 10px; border: 2px solid rgba(35, 38, 77, .3); border-radius: 6px; color: var(--soft); font-size: 19px; }
   #engine:empty { display: none; }
+  .tabs { display: flex; margin-left: 8px; border: var(--line); border-radius: 10px; overflow: hidden; }
+  .tabs a { padding: 5px 16px; color: inherit; font-size: 20px; font-weight: 600; text-decoration: none; background: var(--card); }
+  .tabs a + a { border-left: var(--line); }
+  .tabs a[aria-current] { background: var(--ink); color: var(--card); }
   #sizes, #status {
     display: flex; align-items: center; gap: 12px; padding: 7px 20px;
     border: var(--line); border-radius: 10px; background: var(--card);
@@ -173,6 +177,7 @@
   </svg>
   <h1>Локальная LLM</h1>
   <span id="engine"></span>
+  <nav class="tabs"><a href="/" aria-current="page">Три вопроса</a><a href="/rag">RAG по ПДД</a></nav>
   <div id="sizes" title="Размер текста">
     <span class="aa">Aa</span>
     <span>Вопрос</span>

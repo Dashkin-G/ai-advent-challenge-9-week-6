@@ -1,0 +1,646 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RAG по ПДД</title>
+<link rel="icon" href="data:,">
+<style>
+  /* Стиль — «инженерный блокнот», как у страницы трёх вопросов. Жёлтый — этот компьютер,
+     голубой — облако, лавандовый — найденное в ПДД. */
+  :root {
+    --paper: #f4efe6; --card: #fffdf9; --ink: #23264d; --soft: #50557a;
+    --accent: #e5603b; --code: #f0ebe1; --live: #2f6fd8; --err: #b42318; --err-bg: #fbe3dc;
+    --local: #f2d37a; --cloud: #a9cdee; --found: #c9bdf0;
+    --line: 2px solid var(--ink); --faint: 2px solid rgba(35, 38, 77, .12);
+    --display: Bahnschrift, "Segoe UI", sans-serif;
+    --q-size: 22px; --a-size: 22px;           /* размер вопроса и ответа — меняется регулятором */
+  }
+  * { box-sizing: border-box; }
+  body {
+    display: flex; flex-direction: column; gap: 26px; margin: 0; padding: 24px 44px 60px;
+    color: var(--ink); font: 21px/1.45 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+    background: var(--paper) radial-gradient(rgba(35, 38, 77, .09) 1.3px, transparent 1.6px) 0 0 / 24px 24px;
+  }
+  button, input { font: inherit; color: inherit; }
+  button { cursor: pointer; }
+  button:disabled { cursor: default; opacity: .45; }
+  :focus-visible { outline: 3px dashed var(--ink); outline-offset: 3px; }
+  [hidden] { display: none !important; }
+  svg { fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+
+  /* Кнопка с жёсткой тенью: при нажатии вдавливается */
+  .press { --shade: var(--ink); border: var(--line); box-shadow: 3px 3px 0 var(--shade); transition: transform .08s, box-shadow .08s; }
+  .press:not(:disabled):hover { box-shadow: 4px 4px 0 var(--shade); }
+  .press:not(:disabled):active { transform: translate(2px, 2px); box-shadow: 1px 1px 0 var(--shade); }
+  .press:disabled { box-shadow: none; }
+  .main {
+    --shade: var(--accent); flex: none; padding: 12px 40px; border-radius: 12px;
+    background: var(--ink); color: var(--card); font: 600 28px/1.2 var(--display); box-shadow: 5px 5px 0 var(--shade);
+  }
+  .main:not(:disabled):hover { box-shadow: 6px 6px 0 var(--shade); }
+  .main.stop { --shade: var(--ink); background: var(--card); color: var(--ink); }
+
+  header { display: flex; align-items: center; gap: 14px; }
+  header > * { flex: none; white-space: nowrap; }
+  .logo { width: 46px; height: 46px; flex: none; }
+  h1 { margin: 0; font: 600 40px/1 var(--display); }
+  #engine { padding: 2px 10px; border: 2px solid rgba(35, 38, 77, .3); border-radius: 6px; color: var(--soft); font-size: 19px; }
+  #engine:empty { display: none; }
+  .tabs { display: flex; margin-left: 8px; border: var(--line); border-radius: 10px; overflow: hidden; }
+  .tabs a { padding: 5px 16px; color: inherit; font-size: 20px; font-weight: 600; text-decoration: none; background: var(--card); }
+  .tabs a + a { border-left: var(--line); }
+  .tabs a[aria-current] { background: var(--ink); color: var(--card); }
+  #sizes, #status {
+    display: flex; align-items: center; gap: 12px; padding: 7px 20px;
+    border: var(--line); border-radius: 10px; background: var(--card);
+  }
+  #net {                                 /* облако вкл/выкл: выключенное — как без интернета */
+    display: flex; align-items: center; gap: 10px; margin-left: auto; padding: 6px 18px; border-radius: 10px;
+    background: var(--cloud); font-size: 20px; font-weight: 600;
+  }
+  #net svg { width: 28px; height: 28px; }
+  #net[aria-pressed="false"] { background: var(--err-bg); color: var(--err); --shade: var(--err); border-color: var(--err); }
+  #sizes { gap: 8px; padding: 6px 14px; font-size: 20px; }
+  #sizes .aa { margin-right: 4px; font: 700 24px/1 var(--display); }
+  #sizes .gap { width: 2px; height: 28px; margin: 0 8px; background: rgba(35, 38, 77, .2); }
+  #sizes button {
+    width: 36px; height: 36px; border: 2px solid var(--ink); border-radius: 8px; background: var(--paper);
+    font: 700 22px/1 var(--display);
+  }
+  .dot { flex: none; width: 14px; height: 14px; border-radius: 50%; background: var(--live); animation: live 2s infinite; }
+  @keyframes live { 0% { box-shadow: 0 0 0 0 rgba(47, 111, 216, .5); } 70%, 100% { box-shadow: 0 0 0 10px rgba(47, 111, 216, 0); } }
+  #status { padding: 7px 16px; font-size: 19px; }
+  #status.bad { border-color: var(--err); background: var(--err-bg); color: var(--err); font-weight: 600; }
+  #status.bad .dot { background: var(--err); animation: none; }
+
+  /* Вопрос: поле со списком контрольных вопросов и главная кнопка */
+  .ask { display: flex; align-items: center; gap: 18px; }
+  .help { position: relative; flex: none; }
+  .help-icon { width: 46px; height: 46px; border-radius: 50%; background: var(--card); font: 700 26px/1 var(--display); }
+  .tip {                                 /* мини-справка: видна, пока мышь над «?» */
+    display: none; position: absolute; left: 0; top: calc(100% + 12px); z-index: 20; width: 640px; padding: 16px 22px;
+    border: var(--line); border-radius: 12px; background: var(--card); box-shadow: 4px 4px 0 var(--ink);
+    font-size: 19px; line-height: 1.45;
+  }
+  .help:hover .tip, .help:focus-within .tip { display: block; }
+  .tip::before { content: ""; position: absolute; left: 0; right: 0; top: -16px; height: 16px; }   /* мышь доходит до справки */
+  .tip h3 { margin: 0 0 4px; font: 700 21px/1.3 var(--display); }
+  .tip ol, .tip p { margin: 0 0 12px; }
+  .tip ol { padding-left: 24px; }
+  .tip p:last-child { margin-bottom: 0; }
+  .field { position: relative; flex: 1; min-width: 0; display: flex; }
+  #question {
+    flex: 1; min-width: 0; padding: 12px 64px 12px 18px; border: var(--line); border-radius: 12px;
+    background: var(--card); font-size: var(--q-size); font-weight: 600;
+  }
+  #question:focus { outline: none; box-shadow: 3px 3px 0 var(--ink); }
+  #question::placeholder { color: var(--soft); font-weight: 400; }
+  #pick {
+    position: absolute; right: 8px; top: 50%; translate: 0 -50%; display: grid; place-items: center;
+    width: 44px; height: 44px; border: none; border-radius: 8px; background: none;
+  }
+  #pick:hover, #pick[aria-expanded="true"] { background: var(--paper); }
+  #pick svg { width: 26px; height: 26px; }
+  #list {
+    position: absolute; left: 0; right: 0; top: calc(100% + 8px); z-index: 10; margin: 0; padding: 8px 0;
+    border: var(--line); border-radius: 12px; background: var(--card); box-shadow: 4px 4px 0 var(--ink);
+    list-style: none; font-size: 20px;
+  }
+  #list li { display: flex; gap: 14px; padding: 6px 18px; cursor: pointer; }
+  #list li:hover { background: var(--paper); }
+  #list li b { flex: none; width: 26px; color: var(--soft); text-align: right; font-family: var(--display); }
+
+  /* Шаги: номер в кружке, заголовок и подпись */
+  h2 { display: flex; align-items: baseline; gap: 14px; margin: 0 0 14px; font: 600 28px/1.2 var(--display); }
+  .num {
+    flex: none; display: inline-grid; place-items: center; width: 38px; height: 38px; translate: 0 -3px;
+    border-radius: 50%; background: var(--ink); color: var(--card); font-size: 22px;
+  }
+  .meta { color: var(--soft); font: 400 19px/1.3 "Segoe UI Variable Text", "Segoe UI", sans-serif; }
+
+  /* ① Найденные фрагменты */
+  .frags { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 22px; }
+  .frag {
+    display: flex; flex-direction: column; gap: 4px; padding: 12px 18px 14px; text-align: left;
+    border: var(--line); border-radius: 12px; background: var(--card); box-shadow: 3px 3px 0 var(--ink);
+  }
+  .frag.wait { min-height: 130px; border-style: dashed; box-shadow: none; opacity: .5; }
+  .frag-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+  .label { padding: 0 10px; border-radius: 6px; background: var(--found); font: 700 24px/1.4 var(--display); }
+  .score { color: var(--soft); font-size: 18px; }
+  .place { color: var(--soft); font-size: 18px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .frag p {
+    margin: 4px 0 0; font-size: 18px; line-height: 1.4; white-space: pre-line;
+    display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden;
+  }
+  .frag.open p { display: block; }
+
+  /* ② Два ответа рядом */
+  .pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 30px; }
+  .card {
+    display: flex; flex-direction: column; min-height: 300px; overflow: hidden;
+    border: var(--line); border-radius: 14px; background: var(--card); box-shadow: 4px 4px 0 var(--ink);
+    transition: opacity .3s;
+  }
+  .card.wait { min-height: 170px; opacity: .55; border-style: dashed; box-shadow: none; }
+  .band {
+    position: relative; display: flex; align-items: center; gap: 12px; padding: 10px 22px;
+    border-bottom: var(--line); background: var(--tone);
+  }
+  .band svg { width: 32px; height: 32px; flex: none; }
+  .band b { font: 700 22px/1.1 var(--display); letter-spacing: .06em; text-transform: uppercase; }
+  .band span { font-size: 20px; }
+  .card.done .band b::after { content: " ✓"; }
+  .card.run .band::after {               /* модель пишет — по нижней кромке бежит полоса */
+    content: ""; position: absolute; left: 0; bottom: -3px; width: 30%; height: 4px;
+    background: var(--ink); animation: progress 1.4s ease-in-out infinite;
+  }
+  @keyframes progress { from { left: -30%; } to { left: 100%; } }
+  .card.err .band { background: var(--err-bg); }
+  .body { flex: 1; display: flex; flex-direction: column; gap: 14px; padding: 16px 24px 18px; }
+  .answer { flex: 1; font-size: var(--a-size); white-space: pre-wrap; }
+  .err .answer { color: var(--err); font-weight: 600; }
+  .ref { padding: 0 5px; border-radius: 5px; background: var(--code); color: var(--soft); font-size: .8em; white-space: nowrap; }
+  .foot { padding-top: 12px; border-top: var(--faint); }
+  .metrics { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px 16px; min-height: 48px; color: var(--soft); }
+  .time { color: var(--ink); font: 700 44px/1 var(--display); }
+  .verdict { margin-top: 6px; font-weight: 600; }
+  .verdict.bad { color: var(--err); }
+  details summary { cursor: pointer; color: var(--soft); }
+  .request summary { margin-top: 6px; font-size: 19px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  pre {
+    max-height: 320px; overflow: auto; margin: 8px 0 0; padding: 12px 16px; border-radius: 10px; background: var(--code);
+    font: 16px/1.4 Consolas, "Cascadia Mono", monospace; white-space: pre-wrap; overflow-wrap: anywhere;
+  }
+
+  /* ③ Проверка */
+  #run { padding: 8px 30px; border-radius: 10px; background: var(--card); font-size: 24px; }
+  .check {
+    display: grid; grid-template-columns: minmax(0, 1fr) 380px 380px; align-items: center;
+    border: var(--line); border-radius: 14px; background: var(--card); box-shadow: 4px 4px 0 var(--ink); overflow: hidden;
+  }
+  .check > * { padding: 12px 22px; border-top: var(--faint); }
+  .check > .top { border-top: none; }
+  .side { display: flex; align-items: center; gap: 10px; align-self: stretch; background: var(--tone); }
+  .side svg { width: 28px; height: 28px; flex: none; }
+  .side b { font: 700 20px/1.1 var(--display); letter-spacing: .06em; text-transform: uppercase; }
+  .what b { display: block; font: 600 24px/1.2 var(--display); }
+  .what span { color: var(--soft); font-size: 18px; }
+  .big { font: 700 40px/1 var(--display); }
+  .big small { margin-left: 8px; color: var(--soft); font: 400 19px/1 "Segoe UI Variable Text", "Segoe UI", sans-serif; }
+  .q { display: flex; gap: 14px; align-items: baseline; cursor: pointer; }
+  .q b { flex: none; width: 26px; color: var(--soft); text-align: right; font-family: var(--display); }
+  .q span::before { content: "▸ "; color: var(--soft); }
+  .q.open span::before { content: "▾ "; }
+  .marks { display: flex; align-items: center; gap: 8px; }
+  .mark {
+    display: inline-grid; place-items: center; width: 30px; height: 30px; border-radius: 7px;
+    border: 2px dashed rgba(35, 38, 77, .3); font: 700 19px/1 var(--display);
+  }
+  .mark.ok { border: none; background: var(--ink); color: var(--card); }
+  .mark.bad { border: none; background: var(--err); color: var(--card); }
+  .mark.fail { border: none; background: var(--accent); color: var(--ink); }
+  .mark.now { border-color: var(--live); animation: live 2s infinite; }
+  .marks .sec { margin-left: 8px; color: var(--soft); font-size: 19px; }
+  .more {
+    grid-column: 1 / -1; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px 30px;
+    padding: 6px 22px 18px 62px; border-top: none; background: var(--paper); font-size: 18px;
+  }
+  .more .expect { grid-column: 1 / -1; color: var(--soft); }
+  .run-answer { display: flex; gap: 10px; align-items: flex-start; margin-top: 8px; }
+  .run-answer .mark { flex: none; width: 26px; height: 26px; font-size: 16px; }
+  .run-answer div { white-space: pre-wrap; }
+  .run-answer small { display: block; color: var(--soft); }
+  .run-answer.fail div { color: var(--err); }
+
+  @media (max-width: 1100px) {
+    header { flex-wrap: wrap; }
+    .frags, .pair { grid-template-columns: 1fr; }
+    .check { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <svg class="logo" viewBox="0 0 54 54" aria-hidden="true">
+    <g stroke="#23264d" stroke-width="3" stroke-linecap="round">
+      <path d="M18 4v8M27 4v8M36 4v8M18 42v8M27 42v8M36 42v8M4 18h8M4 27h8M4 36h8M42 18h8M42 27h8M42 36h8"/>
+      <rect x="12" y="12" width="30" height="30" rx="5" fill="#e5603b"/>
+      <rect x="20" y="20" width="14" height="14" rx="2" fill="#f2d37a"/>
+    </g>
+  </svg>
+  <h1>Локальная LLM</h1>
+  <span id="engine"></span>
+  <nav class="tabs"><a href="/">Три вопроса</a><a href="/rag" aria-current="page">RAG по ПДД</a></nav>
+  <button id="net" class="press" aria-pressed="true"></button>
+  <div id="sizes" title="Размер текста">
+    <span class="aa">Aa</span>
+    <span>Вопрос</span>
+    <button data-size="q" data-step="-2" aria-label="Вопрос мельче">−</button>
+    <button data-size="q" data-step="2" aria-label="Вопрос крупнее">+</button>
+    <span class="gap"></span>
+    <span>Ответ</span>
+    <button data-size="a" data-step="-2" aria-label="Ответ мельче">−</button>
+    <button data-size="a" data-step="2" aria-label="Ответ крупнее">+</button>
+  </div>
+  <div id="status"><span class="dot"></span><span id="where"></span></div>
+</header>
+
+<div class="ask">
+  <div class="help">
+    <button class="help-icon press" aria-label="Справка">?</button>
+    <div class="tip" role="tooltip">
+      <h3>Как работает</h3>
+      <ol>
+        <li>Вопрос превращается в вектор — модель bge-m3 в Ollama.</li>
+        <li>FAISS находит 3 ближайших по смыслу фрагмента в индексе недели 5 — Правилах с приложениями, нарезанных по пунктам.</li>
+        <li>Фрагменты и вопрос уходят модели с инструкцией «отвечай только по фрагментам».</li>
+      </ol>
+      <p>Слева отвечает модель на этом компьютере, справа — облачная. Промпт у обеих один и тот же.</p>
+      <h3>Проверка</h3>
+      <p>10 контрольных вопросов недели 5, каждый — 3 раза. Верный ответ — в нём есть все ключевые факты из ожидания.</p>
+    </div>
+  </div>
+  <div class="field">
+    <input id="question" autocomplete="off" placeholder="Вопрос по правилам дорожного движения">
+    <button id="pick" aria-expanded="false" title="Контрольные вопросы">
+      <svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>
+    </button>
+    <ol id="list" hidden></ol>
+  </div>
+  <button id="go" class="main press"></button>
+</div>
+
+<section>
+  <h2><span class="num">1</span>Нашли в ПДД<span class="meta" id="found-meta"></span></h2>
+  <div class="frags"></div>
+</section>
+
+<section>
+  <h2><span class="num">2</span>Ответ по этим фрагментам</h2>
+  <div class="pair"></div>
+</section>
+
+<section>
+  <h2><span class="num">3</span><span id="run-title">Проверка</span>
+    <button id="run" class="press"></button><span class="meta" id="run-meta"></span></h2>
+  <div class="check"></div>
+</section>
+
+<template id="card">
+  <article class="card">
+    <div class="band"></div>
+    <div class="body">
+      <div class="answer"></div>
+      <div class="foot">
+        <div class="metrics"></div>
+        <div class="verdict" hidden></div>
+        <details class="request" hidden><summary></summary><pre></pre></details>
+      </div>
+    </div>
+  </article>
+</template>
+
+<script>
+// Две стороны сравнения: tone — цвет полосы, icon — ноутбук или облако.
+const LAPTOP = '<svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="11" rx="1.5"/><path d="M2 19.5h20"/></svg>';
+const CLOUD = '<svg viewBox="0 0 24 24"><path d="M7 18.5h10.5a4 4 0 0 0 .3-8A6 6 0 0 0 6.2 9.3 4.6 4.6 0 0 0 7 18.5z"/></svg>';
+const SIDES = {
+  local: {title: 'Этот компьютер', tone: 'var(--local)', icon: LAPTOP},
+  cloud: {title: 'Облако', tone: 'var(--cloud)', icon: CLOUD},
+};
+const PLAY = '▶︎', STOP = '■';
+
+const $ = (s, root = document) => root.querySelector(s);
+const question = $('#question'), go = $('#go'), run = $('#run'), list = $('#list'), pick = $('#pick');
+let info = null;       // индекс и модели — /api/rag
+let report = null;     // идущая или последняя проверка — /api/rag/check
+let asking = null;     // вопрос, на который отвечают сейчас: {controller}
+const open = new Set();                 // раскрытые строки проверки
+
+const num = (x, digits = 1) => x.toLocaleString('ru-RU', {maximumFractionDigits: digits});
+const secs = s => s < 10 ? `${num(s)} с` : s < 60 ? `${Math.round(s)} с`
+  : `${Math.floor(Math.round(s) / 60)} мин ${Math.round(s) % 60} с`;
+const plural = (n, [one, few, many]) => n % 10 === 1 && n % 100 !== 11 ? one
+  : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20) ? few : many;
+const tokens = n => `${num(n, 0)} ${plural(n, ['токен', 'токена', 'токенов'])}`;
+const esc = s => s.replace(/[&<>"]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'})[c]);
+// Ответ — обычный текст; пункты в квадратных скобках — неброскими метками, **жирный** — жирным.
+const prose = s => esc(s.trim())
+  .replace(/\[([^\]\n]{1,60})\]/g, '<span class="ref">$1</span>')
+  .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
+
+// Размер текста вопроса (q) и ответа (a): шаг 2 px, выбор общий с первой страницей.
+const SIZE_LIMITS = {q: [16, 36], a: [16, 36]};
+const sizes = {q: 22, a: 22};
+try { Object.assign(sizes, JSON.parse(localStorage.getItem('sizes') || '{}')); } catch {}
+function applySizes() {
+  for (const [key, [low, high]] of Object.entries(SIZE_LIMITS)) {
+    sizes[key] = Math.min(high, Math.max(low, Number(sizes[key]) || 22));
+    document.documentElement.style.setProperty(`--${key}-size`, `${sizes[key]}px`);
+  }
+  for (const button of document.querySelectorAll('#sizes button')) {
+    const [low, high] = SIZE_LIMITS[button.dataset.size], value = sizes[button.dataset.size];
+    button.disabled = Number(button.dataset.step) < 0 ? value <= low : value >= high;
+  }
+  try { localStorage.setItem('sizes', JSON.stringify(sizes)); } catch {}
+}
+for (const button of document.querySelectorAll('#sizes button')) {
+  button.onclick = () => { sizes[button.dataset.size] += Number(button.dataset.step); applySizes(); };
+}
+applySizes();
+
+// Карточки ответов: слева — этот компьютер, справа — облако.
+const cards = {};
+for (const [side, s] of Object.entries(SIDES)) {
+  const card = $('#card').content.firstElementChild.cloneNode(true);
+  card.classList.add('wait');
+  card.style.setProperty('--tone', s.tone);
+  $('.band', card).innerHTML = `${s.icon}<b>${s.title}</b><span></span>`;
+  $('.pair').append(card);
+  cards[side] = card;
+}
+
+// Состояние Ollama и моделей — раз в 3 секунды.
+async function refresh() {
+  let status = null;
+  try { status = await (await fetch('/api/status')).json(); } catch {}
+  const names = [info?.local, info?.embed].filter(Boolean);
+  const loaded = names.filter(n => status?.loaded?.some(m => m.name.replace(/:latest$/, '') === n));
+  const gpu = status?.loaded?.some(m => m.vram > 0);
+  const problem = !status ? 'Нет связи с приложением'
+    : info?.error ? info.error
+    : !status.running ? 'Ollama не запущен — откройте его из меню «Пуск»' : '';
+  $('#status').classList.toggle('bad', Boolean(problem));
+  $('#where').textContent = problem || (loaded.length === names.length
+    ? `модели в памяти · ${gpu ? 'видеокарта' : 'процессор'}` : loaded.length ? `в памяти ${loaded.join(', ')}` : 'модели на диске');
+  $('#status').title = names.join(' + ');
+  $('#engine').textContent = status?.running ? `Ollama ${status.version}` : '';
+}
+
+async function start() {
+  try { info = await (await fetch('/api/rag')).json(); } catch {}
+  for (const side of Object.keys(SIDES)) $('.band span', cards[side]).textContent = info?.[side] ?? '';
+  showNet(info?.cloud_on ?? true);
+  waitFound(`ближайшие по смыслу из ${info?.chunks ?? '…'} фрагментов`);
+  refresh();
+  setInterval(refresh, 3000);
+  loadCheck();
+}
+
+// Облако вкл/выкл: выключенное сервер не зовёт — так видно, что RAG работает без него.
+const net = $('#net');
+const NO_CLOUD = '<svg viewBox="0 0 24 24"><path d="M7 18.5h10.5a4 4 0 0 0 .3-8A6 6 0 0 0 6.2 9.3 4.6 4.6 0 0 0 7 18.5z"/><path d="M3 3l18 18"/></svg>';
+function showNet(on) {
+  net.setAttribute('aria-pressed', on);
+  net.innerHTML = on ? `${CLOUD}Облако` : `${NO_CLOUD}Без облака`;
+  net.title = on ? 'Отключить облако — ответит только этот компьютер' : 'Вернуть облако';
+}
+net.onclick = async () => {
+  const on = net.getAttribute('aria-pressed') !== 'true';
+  try {
+    const res = await fetch('/api/rag/cloud', {method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({on})});
+    showNet((await res.json()).cloud_on);
+  } catch {}
+};
+
+// Список контрольных вопросов под полем: выбрать — подставить в поле.
+pick.onclick = () => toggleList(list.hidden);
+function toggleList(show) {
+  list.hidden = !show;
+  pick.setAttribute('aria-expanded', show);
+}
+document.addEventListener('click', e => { if (!e.target.closest('.field')) toggleList(false); });
+question.onkeydown = e => {
+  if (e.key === 'Escape') toggleList(false);
+  if (e.key === 'Enter') { e.preventDefault(); ask(); }
+};
+question.oninput = buttons;
+
+function buttons() {
+  const checking = Boolean(report?.running);
+  go.textContent = asking ? `${STOP} Остановить` : `${PLAY} Спросить`;
+  go.classList.toggle('stop', Boolean(asking));
+  go.disabled = !asking && (checking || !question.value.trim());
+  go.title = checking ? 'Идёт проверка — спросить можно после неё' : '';
+  run.textContent = checking ? `${STOP} Остановить` : `${PLAY} Проверить`;
+  run.disabled = !checking && Boolean(asking);
+}
+
+go.onclick = () => asking ? asking.controller.abort() : ask();
+
+async function ask() {
+  const text = question.value.trim();
+  if (!text || asking || report?.running) return;
+  toggleList(false);
+  const current = asking = {controller: new AbortController()};
+  buttons();
+  waitFound('ищет…');
+  await Promise.all(Object.keys(SIDES).map(side => answer(side, text, current)));
+  if (shown !== current) {               // до фрагментов не дошло: остановили или ошибка — она в карточках
+    $('#found-meta').textContent = current.controller.signal.aborted ? 'остановлено' : 'не получилось';
+  }
+  asking = null;
+  buttons();
+}
+
+async function* lines(res) {           // ответ сервера — строки JSON
+  const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+  let rest = '';
+  for (let r; !(r = await reader.read()).done;) {
+    const parts = (rest + r.value).split('\n');
+    rest = parts.pop();
+    for (const part of parts) if (part.trim()) yield JSON.parse(part);
+  }
+}
+
+function waitFound(meta) {               // пустые места под фрагменты — до ответа поиска
+  $('#found-meta').textContent = meta;
+  $('.frags').innerHTML = '<div class="frag wait"></div>'.repeat(info?.top ?? 3);
+}
+
+let shown = null;                        // на какой вопрос уже нарисованы фрагменты
+function showFound(event, current) {     // фрагменты приходят с обоими ответами — рисуем один раз
+  if (shown === current) return;
+  shown = current;
+  $('#found-meta').textContent = `${event.hits.length} из ${info?.chunks ?? '…'} фрагментов · ${secs(event.seconds)} · на этом компьютере`;
+  $('.frags').replaceChildren(...event.hits.map(h => {
+    const frag = document.createElement('button');
+    frag.className = 'frag';
+    frag.title = 'Показать фрагмент целиком';
+    frag.innerHTML = `<span class="frag-head"><span class="label">${esc(h.label)}</span>`
+      + `<span class="score" title="Сходство вопроса и фрагмента: косинус векторов">${num(h.score, 2)}</span></span>`
+      + `<span class="place" title="${esc(h.title)}">${esc(h.section || h.title)}</span>`
+      + `<p>${esc(h.text.replace(/^#+ .*\n*/gm, ''))}</p>`;      // заголовки раздела уже есть строкой выше
+    frag.onclick = () => frag.classList.toggle('open');
+    return frag;
+  }));
+}
+
+async function answer(side, text, current) {
+  const card = cards[side], out = $('.answer', card), metrics = $('.metrics', card);
+  card.classList.remove('wait', 'done', 'err');
+  card.classList.add('run');
+  out.innerHTML = '';
+  $('.verdict', card).hidden = $('.request', card).hidden = true;
+  const started = performance.now(), since = () => (performance.now() - started) / 1000;
+  let said = '', phase = 'читает фрагменты…', done = null;
+  const live = () => { metrics.innerHTML = `<span class="time">${secs(since())}</span><span>${phase}</span>`; };
+  live();
+  const timer = setInterval(live, 200);
+  try {
+    const res = await fetch('/api/rag/ask', {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, signal: current.controller.signal,
+      body: JSON.stringify({question: text, where: side}),
+    });
+    if (!res.ok) throw new Error((await res.json()).detail ?? `Ошибка ${res.status}`);
+    for await (const event of lines(res)) {
+      if (event.type === 'found') showFound(event, current);
+      else if (event.type === 'request') showRequest(card, event);
+      else if (event.type === 'think') phase = 'думает…';
+      else if (event.type === 'text') {
+        phase = 'пишет…';
+        said += event.text;
+        out.innerHTML = prose(said);
+      } else if (event.type === 'done') done = event;
+      else if (event.type === 'error') throw new Error(event.text);
+    }
+    if (!done) throw new Error('Ответ оборвался');
+    clearInterval(timer);
+    const load = done.load > 1 ? ` · загрузка ${secs(done.load)}` : '';
+    metrics.innerHTML = `<span class="time">${secs(since())}</span>`
+      + `<span>${num(done.speed)} токенов/сек · ${tokens(done.tokens)}${load}</span>`;
+    showVerdict(card, done.check);
+    card.classList.replace('run', 'done');
+  } catch (e) {
+    clearInterval(timer);
+    card.classList.remove('run');
+    if (e.name === 'AbortError') metrics.innerHTML = `<span>остановлено · ${secs(since())}</span>`;
+    else {
+      card.classList.add('err');
+      out.textContent = e.message;
+      metrics.innerHTML = '';
+    }
+  }
+}
+
+function showRequest(card, {url, body}) {  // что ушло модели: адрес и тело запроса
+  const details = $('.request', card);
+  $('summary', details).textContent = `Запрос → ${new URL(url).host}`;
+  $('pre', details).textContent = `POST ${url}\n${JSON.stringify(body, null, 2)}`;
+  details.hidden = false;
+}
+
+function showVerdict(card, check) {        // только у контрольного вопроса
+  const verdict = $('.verdict', card);
+  verdict.hidden = !check;
+  if (!check) return;
+  verdict.classList.toggle('bad', !check.ok);
+  verdict.textContent = check.ok ? '✓ верно: все ключевые факты на месте' : `✗ не хватает: ${check.missing.join(' · ')}`;
+}
+
+// ③ Проверка: итог по моделям и строка на каждый вопрос.
+run.onclick = async () => {
+  const method = report?.running ? 'DELETE' : 'POST';
+  try { report = await (await fetch('/api/rag/check', {method})).json(); } catch { return; }
+  renderCheck();
+  if (report.running) setTimeout(loadCheck, 1500);
+};
+
+async function loadCheck() {
+  try { report = await (await fetch('/api/rag/check')).json(); } catch { return; }
+  renderCheck();
+  if (report.running) setTimeout(loadCheck, 1500);
+}
+
+function mark(a, now) {
+  if (!a) return `<span class="mark${now ? ' now' : ''}"></span>`;
+  if (a.error) return `<span class="mark fail" title="${esc(a.error)}">!</span>`;
+  return a.ok ? '<span class="mark ok">✓</span>' : '<span class="mark bad">✗</span>';
+}
+
+function renderCheck() {
+  buttons();
+  const {summary, results, questions, runs} = report;
+  if (!list.children.length) {           // список под полем вопроса — те же контрольные вопросы
+    list.replaceChildren(...questions.map((q, i) => {
+      const item = document.createElement('li');
+      item.innerHTML = `<b>${i + 1}</b><span>${esc(q.question)}</span>`;
+      item.onclick = () => { question.value = q.question; toggleList(false); buttons(); question.focus(); };
+      return item;
+    }));
+  }
+  const total = Object.values(summary).reduce((n, s) => n + s.total, 0);
+  const done = Object.values(summary).reduce((n, s) => n + s.done, 0);
+  const n = questions.length;
+  $('#run-title').textContent = `Проверка: ${n} ${plural(n, ['вопрос', 'вопроса', 'вопросов'])} × ${runs} ${plural(runs, ['прогон', 'прогона', 'прогонов'])}`;
+  const when = d => new Date(d).toLocaleString('ru-RU', {day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit'});
+  $('#run-meta').textContent = report.running ? `идёт · ${done} из ${total} ответов`
+    : report.finished ? `${when(report.started)} · ${secs((new Date(report.finished) - new Date(report.started)) / 1000)}`
+    : 'ещё не проводилась';
+
+  const sides = Object.entries(SIDES);
+  const head = s => `<div class="side top" style="--tone: ${s.tone}">${s.icon}<b>${s.title}</b></div>`;
+  const cell = html => html ?? '<span class="big">—</span>';
+  const rows = [
+    ['Качество', 'верных ответов', s => s.done
+      ? `<span class="big">${s.correct}<small>из ${s.done}${s.errors ? ` · сбоев ${s.errors}` : ''}</small></span>` : null],
+    ['Скорость', 'на ответ, с поиском', s => s.seconds != null
+      ? `<span class="big">${secs(s.seconds)}<small>${num(s.speed)} токенов/сек</small></span>` : null],
+    ['Стабильность', `вопросов с одним итогом во всех ${runs} прогонах`, s => s.full
+      ? `<span class="big">${s.stable}<small>из ${s.full}</small></span>` : null],
+  ];
+  // Где сейчас идёт проверка у каждой модели: прогоны по кругу — первый пустой ответ по порядку.
+  const now = {};
+  for (const [side] of sides) {
+    for (let r = 0; report.running && r < runs && now[side] == null; r++) {
+      const i = questions.findIndex((_, k) => !results[side][k]?.[r]);
+      if (i >= 0) now[side] = `${i}:${r}`;
+    }
+  }
+  let html = '<div class="top"></div>' + sides.map(([, s]) => head(s)).join('');
+  for (const [title, hint, value] of rows) {
+    html += `<div class="what"><b>${title}</b><span>${hint}</span></div>`
+      + sides.map(([side]) => `<div>${cell(value(summary[side]))}</div>`).join('');
+  }
+  questions.forEach((q, i) => {
+    const isOpen = open.has(i);
+    html += `<div class="q${isOpen ? ' open' : ''}" data-i="${i}"><b>${i + 1}</b><span>${esc(q.question)}</span></div>`;
+    for (const [side] of sides) {
+      const row = results[side][i] ?? [];
+      const timed = row.filter(a => a && !a.error);
+      const avg = timed.length ? secs(timed.reduce((t, a) => t + a.seconds, 0) / timed.length) : '';
+      html += `<div class="marks">${Array.from({length: runs}, (_, r) => mark(row[r], now[side] === `${i}:${r}`)).join('')}`
+        + `<span class="sec">${avg}</span></div>`;
+    }
+    if (isOpen) {
+      html += `<div class="more"><div class="expect">Ожидание: ${esc(q.expect)}</div>`
+        + sides.map(([side]) => `<div>${(results[side][i] ?? []).map(runAnswer).join('') || '<span class="meta">ещё нет ответов</span>'}</div>`).join('')
+        + '</div>';
+    }
+  });
+  $('.check').innerHTML = html;
+  for (const row of document.querySelectorAll('.q')) {
+    row.onclick = () => {
+      const i = Number(row.dataset.i);
+      open.has(i) ? open.delete(i) : open.add(i);
+      renderCheck();
+    };
+  }
+}
+
+function runAnswer(a) {
+  if (!a) return '';
+  if (a.error) return `<div class="run-answer fail"><span class="mark fail">!</span><div>${esc(a.error)}<small>${secs(a.seconds)}</small></div></div>`;
+  const missing = a.ok ? '' : ` · не хватает: ${a.missing.map(esc).join(' · ')}`;
+  return `<div class="run-answer">${mark(a)}<div>${prose(a.answer)}<small>${secs(a.seconds)}${missing}</small></div></div>`;
+}
+
+question.value = '';
+buttons();
+start();
+</script>
+</body>
+</html>

@@ -110,6 +110,16 @@ def summary(rows: list[list[dict | None]]) -> dict:
     }
 
 
+def judged(results: dict) -> dict:
+    """Итог — по нынешнему ожиданию: у ответа (не у сбоя) появляются ok и missing."""
+    return {side: [[{**a, **_facts(q, a["answer"])} if a and "answer" in a else a for a in row]
+                   for q, row in zip(QUESTIONS, rows)] for side, rows in results.items()}
+
+
+def questions() -> list[dict]:
+    return [{"question": q["question"], "expect": q["expect"]} for q in QUESTIONS]
+
+
 def report() -> dict:
     """Идущая или последняя проверка: вопросы, ответы по прогонам с итогом и сводка по моделям."""
     data = _live
@@ -117,9 +127,6 @@ def report() -> dict:
         data = json.loads(config.CHECK_PATH.read_text(encoding="utf-8"))
     data = data or {"started": None, "finished": None,
                     "results": {side: [[None] * RUNS for _ in QUESTIONS] for side in SIDES}}
-    # Итог — по нынешнему ожиданию: у ответа (не у сбоя) появляются ok и missing.
-    results = {side: [[{**a, **_facts(q, a["answer"])} if a and "answer" in a else a for a in row]
-                      for q, row in zip(QUESTIONS, rows)] for side, rows in data["results"].items()}
+    results = judged(data["results"])
     return {"running": running(), "runs": RUNS, "started": data["started"], "finished": data["finished"],
-            "results": results, "questions": [{"question": q["question"], "expect": q["expect"]} for q in QUESTIONS],
-            "summary": {side: summary(results[side]) for side in SIDES}}
+            "results": results, "questions": questions(), "summary": {side: summary(results[side]) for side in SIDES}}

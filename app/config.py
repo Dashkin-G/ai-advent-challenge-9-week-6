@@ -25,6 +25,7 @@ EMBED_MODEL = os.getenv("EMBED_MODEL", "bge-m3")    # та же модель, ч
 TOP = int(os.getenv("TOP", "3"))                     # столько фрагментов уходит модели
 QUESTIONS_PATH = ROOT / "control_questions.json"     # 10 контрольных вопросов недели 5
 CHECK_PATH = ROOT / "data" / "rag_check.json"        # итог последней проверки
+TUNE_PATH = ROOT / "data" / "tune_check.json"        # итог проверки «до и после оптимизации» (день 29)
 
 # Облачная модель для сравнения — та, что отвечала в неделе 5 (Alibaba Model Studio).
 CLOUD_KEY = os.getenv("DASHSCOPE_API_KEY", "")

@@ -3,15 +3,15 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>RAG по ПДД</title>
+<title>Оптимизация</title>
 <link rel="icon" href="data:,">
 <style>
-  /* Стиль — «инженерный блокнот», как у страницы трёх вопросов. Жёлтый — этот компьютер,
-     голубой — облако, лавандовый — найденное в ПДД. */
+  /* Стиль — «инженерный блокнот», как у двух других страниц. Бежевый — «до» (день 28),
+     жёлтый — «после» (оптимизированная), лавандовый — найденное в ПДД. */
   :root {
     --paper: #f4efe6; --card: #fffdf9; --ink: #23264d; --soft: #50557a;
     --accent: #e5603b; --code: #f0ebe1; --live: #2f6fd8; --err: #b42318; --err-bg: #fbe3dc;
-    --local: #f2d37a; --cloud: #a9cdee; --found: #c9bdf0;
+    --before: #e6dccb; --after: #f2d37a; --found: #c9bdf0;
     --line: 2px solid var(--ink); --faint: 2px solid rgba(35, 38, 77, .12);
     --display: Bahnschrift, "Segoe UI", sans-serif;
     --q-size: 22px; --a-size: 22px;           /* размер вопроса и ответа — меняется регулятором */
@@ -40,6 +40,7 @@
   }
   .main:not(:disabled):hover { box-shadow: 6px 6px 0 var(--shade); }
   .main.stop { --shade: var(--ink); background: var(--card); color: var(--ink); }
+  .small { padding: 4px 16px; border-radius: 10px; background: var(--card); font: 600 19px/1.3 "Segoe UI Variable Text", "Segoe UI", sans-serif; }
 
   header { display: flex; align-items: center; gap: 14px; }
   header > * { flex: none; white-space: nowrap; }
@@ -55,13 +56,7 @@
     display: flex; align-items: center; gap: 12px; padding: 7px 20px;
     border: var(--line); border-radius: 10px; background: var(--card);
   }
-  #net {                                 /* облако вкл/выкл: выключенное — как без интернета */
-    display: flex; align-items: center; gap: 10px; margin-left: auto; padding: 6px 18px; border-radius: 10px;
-    background: var(--cloud); font-size: 20px; font-weight: 600;
-  }
-  #net svg { width: 28px; height: 28px; }
-  #net[aria-pressed="false"] { background: var(--err-bg); color: var(--err); --shade: var(--err); border-color: var(--err); }
-  #sizes { gap: 8px; padding: 6px 14px; font-size: 20px; }
+  #sizes { margin-left: auto; gap: 8px; padding: 6px 14px; font-size: 20px; }
   #sizes .aa { margin-right: 4px; font: 700 24px/1 var(--display); }
   #sizes .gap { width: 2px; height: 28px; margin: 0 8px; background: rgba(35, 38, 77, .2); }
   #sizes button {
@@ -74,21 +69,54 @@
   #status.bad { border-color: var(--err); background: var(--err-bg); color: var(--err); font-weight: 600; }
   #status.bad .dot { background: var(--err); animation: none; }
 
-  /* Вопрос: поле со списком контрольных вопросов и главная кнопка */
-  .ask { display: flex; align-items: center; gap: 18px; }
+  /* Шаги: номер в кружке, заголовок и подпись */
+  h2 { display: flex; align-items: center; gap: 14px; margin: 0 0 14px; font: 600 28px/1.2 var(--display); }
+  .num {
+    flex: none; display: inline-grid; place-items: center; width: 38px; height: 38px;
+    border-radius: 50%; background: var(--ink); color: var(--card); font-size: 22px;
+  }
+  .meta { color: var(--soft); font: 400 19px/1.3 "Segoe UI Variable Text", "Segoe UI", sans-serif; }
   .help { position: relative; flex: none; }
-  .help-icon { width: 46px; height: 46px; border-radius: 50%; background: var(--card); font: 700 26px/1 var(--display); }
+  .help-icon { width: 40px; height: 40px; border-radius: 50%; background: var(--card); font: 700 22px/1 var(--display); }
   .tip {                                 /* мини-справка: видна, пока мышь над «?» */
-    display: none; position: absolute; left: 0; top: calc(100% + 12px); z-index: 20; width: 640px; padding: 16px 22px;
+    display: none; position: absolute; left: 0; top: calc(100% + 12px); z-index: 20; width: 680px; padding: 16px 22px;
     border: var(--line); border-radius: 12px; background: var(--card); box-shadow: 4px 4px 0 var(--ink);
-    font-size: 19px; line-height: 1.45;
+    font: 400 19px/1.45 "Segoe UI Variable Text", "Segoe UI", sans-serif;
   }
   .help:hover .tip, .help:focus-within .tip { display: block; }
-  .tip::before { content: ""; position: absolute; left: 0; right: 0; top: -16px; height: 16px; }   /* мышь доходит до справки */
-  .tip h3 { margin: 0 0 4px; font: 700 21px/1.3 var(--display); }
-  .tip ol, .tip p { margin: 0 0 12px; }
-  .tip ol { padding-left: 24px; }
+  .tip::before { content: ""; position: absolute; left: 0; right: 0; top: -16px; height: 16px; }
+  .tip p { margin: 0 0 8px; }
   .tip p:last-child { margin-bottom: 0; }
+
+  /* ① Настройки: параметр, «до» и переключатели «после» */
+  .knobs {
+    display: grid; grid-template-columns: minmax(260px, 1fr) 300px auto; align-items: center;
+    border: var(--line); border-radius: 14px; background: var(--card); box-shadow: 4px 4px 0 var(--ink); overflow: hidden;
+  }
+  .knobs > * { padding: 9px 22px; border-top: var(--faint); }
+  .knobs > .top { border-top: none; align-self: stretch; display: flex; align-items: center; gap: 10px; }
+  .knobs .side b { font: 700 20px/1.1 var(--display); letter-spacing: .06em; text-transform: uppercase; }
+  .knobs .side { background: var(--tone); }
+  .name b { font: 600 22px/1.2 var(--display); }
+  .name code { margin-left: 10px; color: var(--soft); font: 16px Consolas, "Cascadia Mono", monospace; }
+  .name.changed b::before {              /* параметр отличается от «до» */
+    content: ""; display: inline-block; width: 12px; height: 12px; margin-right: 10px;
+    border-radius: 50%; background: var(--accent); vertical-align: 2px;
+  }
+  .was { font: 600 21px/1.2 var(--display); }
+  .was small { margin-left: 8px; color: var(--soft); font: 400 17px/1 "Segoe UI Variable Text", "Segoe UI", sans-serif; }
+  .now-set { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; background: rgba(242, 211, 122, .18); align-self: stretch; }
+  .seg { display: inline-flex; border: var(--line); border-radius: 10px; overflow: hidden; }
+  .seg button { min-width: 64px; padding: 4px 14px; border: none; background: var(--card); font: 600 20px/1.3 var(--display); }
+  .seg button + button { border-left: var(--line); }
+  .seg button:hover { background: var(--paper); }
+  .seg button[aria-pressed="true"] { background: var(--ink); color: var(--card); }
+  .link { padding: 0; border: none; background: none; color: var(--soft); font-size: 18px; text-decoration: underline dotted; }
+  .prompts { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; margin-top: 16px; }
+  .prompts h3 { margin: 0 0 6px; font: 600 21px/1.2 var(--display); }
+
+  /* ② Вопрос и два ответа */
+  .ask { display: flex; align-items: center; gap: 18px; margin-bottom: 14px; }
   .field { position: relative; flex: 1; min-width: 0; display: flex; }
   #question {
     flex: 1; min-width: 0; padding: 12px 64px 12px 18px; border: var(--line); border-radius: 12px;
@@ -110,36 +138,12 @@
   #list li { display: flex; gap: 14px; padding: 6px 18px; cursor: pointer; }
   #list li:hover { background: var(--paper); }
   #list li b { flex: none; width: 26px; color: var(--soft); text-align: right; font-family: var(--display); }
+  .found { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; min-height: 36px; margin-bottom: 16px; color: var(--soft); font-size: 19px; }
+  .chip { padding: 0 10px; border-radius: 6px; background: var(--found); color: var(--ink); font: 700 20px/1.5 var(--display); cursor: help; }
 
-  /* Шаги: номер в кружке, заголовок и подпись */
-  h2 { display: flex; align-items: baseline; gap: 14px; margin: 0 0 14px; font: 600 28px/1.2 var(--display); }
-  .num {
-    flex: none; display: inline-grid; place-items: center; width: 38px; height: 38px; translate: 0 -3px;
-    border-radius: 50%; background: var(--ink); color: var(--card); font-size: 22px;
-  }
-  .meta { color: var(--soft); font: 400 19px/1.3 "Segoe UI Variable Text", "Segoe UI", sans-serif; }
-
-  /* ① Найденные фрагменты */
-  .frags { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 22px; }
-  .frag {
-    display: flex; flex-direction: column; gap: 4px; padding: 12px 18px 14px; text-align: left;
-    border: var(--line); border-radius: 12px; background: var(--card); box-shadow: 3px 3px 0 var(--ink);
-  }
-  .frag.wait { min-height: 130px; border-style: dashed; box-shadow: none; opacity: .5; }
-  .frag-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
-  .label { padding: 0 10px; border-radius: 6px; background: var(--found); font: 700 24px/1.4 var(--display); }
-  .score { color: var(--soft); font-size: 18px; }
-  .place { color: var(--soft); font-size: 18px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .frag p {
-    margin: 4px 0 0; font-size: 18px; line-height: 1.4; white-space: pre-line;
-    display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden;
-  }
-  .frag.open p { display: block; }
-
-  /* ② Два ответа рядом */
   .pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 30px; }
   .card {
-    display: flex; flex-direction: column; min-height: 300px; overflow: hidden;
+    display: flex; flex-direction: column; min-height: 280px; overflow: hidden;
     border: var(--line); border-radius: 14px; background: var(--card); box-shadow: 4px 4px 0 var(--ink);
     transition: opacity .3s;
   }
@@ -148,7 +152,6 @@
     position: relative; display: flex; align-items: center; gap: 12px; padding: 10px 22px;
     border-bottom: var(--line); background: var(--tone);
   }
-  .band svg { width: 32px; height: 32px; flex: none; }
   .band b { font: 700 22px/1.1 var(--display); letter-spacing: .06em; text-transform: uppercase; }
   .band span { font-size: 20px; }
   .card.done .band b::after { content: " ✓"; }
@@ -163,12 +166,12 @@
   .err .answer { color: var(--err); font-weight: 600; }
   .ref { padding: 0 5px; border-radius: 5px; background: var(--code); color: var(--soft); font-size: .8em; white-space: nowrap; }
   .foot { padding-top: 12px; border-top: var(--faint); }
-  .metrics { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px 16px; min-height: 48px; color: var(--soft); }
+  .metrics { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 18px; min-height: 48px; color: var(--soft); }
   .time { color: var(--ink); font: 700 44px/1 var(--display); }
   .verdict { margin-top: 6px; font-weight: 600; }
   .verdict.bad { color: var(--err); }
   details summary { cursor: pointer; color: var(--soft); }
-  .request summary { margin-top: 6px; font-size: 19px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .request summary { margin-top: 6px; font-size: 19px; }
   pre {
     max-height: 320px; overflow: auto; margin: 8px 0 0; padding: 12px 16px; border-radius: 10px; background: var(--code);
     font: 16px/1.4 Consolas, "Cascadia Mono", monospace; white-space: pre-wrap; overflow-wrap: anywhere;
@@ -182,13 +185,15 @@
   }
   .check > * { padding: 12px 22px; border-top: var(--faint); }
   .check > .top { border-top: none; }
-  .side { display: flex; align-items: center; gap: 10px; align-self: stretch; background: var(--tone); }
-  .side svg { width: 28px; height: 28px; flex: none; }
-  .side b { font: 700 20px/1.1 var(--display); letter-spacing: .06em; text-transform: uppercase; }
+  .side { align-self: stretch; background: var(--tone); }
+  .side b { display: block; font: 700 20px/1.1 var(--display); letter-spacing: .06em; text-transform: uppercase; }
+  .side span { font-size: 16px; }
   .what b { display: block; font: 600 24px/1.2 var(--display); }
   .what span { color: var(--soft); font-size: 18px; }
   .big { font: 700 40px/1 var(--display); }
   .big small { margin-left: 8px; color: var(--soft); font: 400 19px/1 "Segoe UI Variable Text", "Segoe UI", sans-serif; }
+  .delta { margin-left: 10px; padding: 2px 8px; border-radius: 6px; background: var(--ink); color: var(--card); font: 700 19px/1 var(--display); vertical-align: 6px; }
+  .delta.worse { background: var(--err); }
   .q { display: flex; gap: 14px; align-items: baseline; cursor: pointer; }
   .q b { flex: none; width: 26px; color: var(--soft); text-align: right; font-family: var(--display); }
   .q span::before { content: "▸ "; color: var(--soft); }
@@ -216,8 +221,7 @@
 
   @media (max-width: 1100px) {
     header { flex-wrap: wrap; }
-    .frags, .pair { grid-template-columns: 1fr; }
-    .check { grid-template-columns: 1fr; }
+    .pair, .check, .knobs, .prompts { grid-template-columns: 1fr; }
   }
 </style>
 </head>
@@ -232,8 +236,7 @@
   </svg>
   <h1>Локальная LLM</h1>
   <span id="engine"></span>
-  <nav class="tabs"><a href="/">Три вопроса</a><a href="/rag" aria-current="page">RAG по ПДД</a><a href="/tune">Оптимизация</a></nav>
-  <button id="net" class="press" aria-pressed="true"></button>
+  <nav class="tabs"><a href="/">Три вопроса</a><a href="/rag">RAG по ПДД</a><a href="/tune" aria-current="page">Оптимизация</a></nav>
   <div id="sizes" title="Размер текста">
     <span class="aa">Aa</span>
     <span>Вопрос</span>
@@ -247,38 +250,40 @@
   <div id="status"><span class="dot"></span><span id="where"></span></div>
 </header>
 
-<div class="ask">
-  <div class="help">
-    <button class="help-icon press" aria-label="Справка">?</button>
-    <div class="tip" role="tooltip">
-      <h3>Как работает</h3>
-      <ol>
-        <li>Вопрос превращается в вектор — модель bge-m3 в Ollama.</li>
-        <li>FAISS находит 3 ближайших по смыслу фрагмента в индексе недели 5 — Правилах с приложениями, нарезанных по пунктам.</li>
-        <li>Фрагменты и вопрос уходят модели с инструкцией «отвечай только по фрагментам».</li>
-      </ol>
-      <p>Слева отвечает модель на этом компьютере, справа — облачная. Промпт у обеих один и тот же.</p>
-      <h3>Проверка</h3>
-      <p>10 контрольных вопросов недели 5, каждый — 3 раза. Верный ответ — в нём есть все ключевые факты из ожидания.</p>
-    </div>
-  </div>
-  <div class="field">
-    <input id="question" autocomplete="off" placeholder="Вопрос по правилам дорожного движения">
-    <button id="pick" aria-expanded="false" title="Контрольные вопросы">
-      <svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>
-    </button>
-    <ol id="list" hidden></ol>
-  </div>
-  <button id="go" class="main press"></button>
-</div>
-
 <section>
-  <h2><span class="num">1</span>Нашли в ПДД<span class="meta" id="found-meta"></span></h2>
-  <div class="frags"></div>
+  <h2><span class="num">1</span>Настройки
+    <span class="help">
+      <button class="help-icon press" aria-label="Справка">?</button>
+      <span class="tip" role="tooltip">
+        <p><b>Квантование</b> — сколько бит на вес модели: Q4_K_M ≈ 4,5 бита, Q8_0 — 8, BF16 — 16, без сжатия. Меньше бит — меньше памяти и быстрее, но может теряться точность.</p>
+        <p><b>Температура</b> — случайность в выборе слов: 0 — всегда самое вероятное, ответ повторяется; 0,7 — разнообразнее.</p>
+        <p><b>Штраф за повторы</b> — модель избегает слов, которые уже написала. Мешает переписывать числа и термины из правил.</p>
+        <p><b>Макс. токенов</b> — ответ обрывается на этом месте. Защита от слишком длинных ответов.</p>
+        <p><b>Контекст</b> — сколько токенов модель держит в памяти: промпт и ответ вместе. Больше — больше памяти; меньше 2048 Ollama не ставит.</p>
+        <p><b>Промпт</b> — инструкция модели и то, как поданы фрагменты правил.</p>
+        <p>Точка у параметра — значение отличается от «до».</p>
+      </span>
+    </span>
+    <button id="as-before" class="small press">как до</button>
+    <button id="as-best" class="small press">оптимальные</button>
+  </h2>
+  <div class="knobs"></div>
+  <div class="prompts" hidden></div>
 </section>
 
 <section>
-  <h2><span class="num">2</span>Ответ по этим фрагментам</h2>
+  <h2><span class="num">2</span>Ответ на один вопрос<span class="meta">сначала «до», потом «после»</span></h2>
+  <div class="ask">
+    <div class="field">
+      <input id="question" autocomplete="off" placeholder="Вопрос по правилам дорожного движения">
+      <button id="pick" aria-expanded="false" title="Контрольные вопросы">
+        <svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>
+      </button>
+      <ol id="list" hidden></ol>
+    </div>
+    <button id="go" class="main press"></button>
+  </div>
+  <div class="found"></div>
   <div class="pair"></div>
 </section>
 
@@ -303,35 +308,59 @@
 </template>
 
 <script>
-// Две стороны сравнения: tone — цвет полосы, icon — ноутбук или облако.
-const LAPTOP = '<svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="11" rx="1.5"/><path d="M2 19.5h20"/></svg>';
-const CLOUD = '<svg viewBox="0 0 24 24"><path d="M7 18.5h10.5a4 4 0 0 0 .3-8A6 6 0 0 0 6.2 9.3 4.6 4.6 0 0 0 7 18.5z"/></svg>';
 const SIDES = {
-  local: {title: 'Этот компьютер', tone: 'var(--local)', icon: LAPTOP},
-  cloud: {title: 'Облако', tone: 'var(--cloud)', icon: CLOUD},
+  before: {title: 'До', sub: 'день 28', tone: 'var(--before)'},
+  after: {title: 'После', sub: 'оптимизация', tone: 'var(--after)'},
 };
+// Ручки «после»: что показать и какие значения предложить. null у токенов — без лимита.
+const KNOBS = [
+  {key: 'model', title: 'Квантование', api: 'model', values: () => info.models
+    .filter(m => m.name === info.before.model || m.name.startsWith(`${info.before.model}-`))
+    .sort((a, b) => a.size - b.size).map(m => m.name)},
+  {key: 'temperature', title: 'Температура', api: 'temperature', values: () => [0, 0.1, 0.3, 0.7, 1]},
+  {key: 'presence_penalty', title: 'Штраф за повторы', api: 'presence_penalty', values: () => [0, 0.5, 1, 1.5]},
+  {key: 'num_predict', title: 'Макс. токенов ответа', api: 'num_predict', values: () => [64, 128, 256, 512, null]},
+  {key: 'num_ctx', title: 'Контекст, токенов', api: 'num_ctx', values: () => [2048, 4096, 8192, 32768]},
+  {key: 'prompt', title: 'Промпт', api: 'messages', values: () => ['week5', 'task']},
+];
+const UNSET_NOTE = {presence_penalty: 'из модели', num_ctx: 'Ollama', num_predict: 'без лимита'};
 const PLAY = '▶︎', STOP = '■';
 
 const $ = (s, root = document) => root.querySelector(s);
 const question = $('#question'), go = $('#go'), run = $('#run'), list = $('#list'), pick = $('#pick');
-let info = null;       // индекс и модели — /api/rag
-let report = null;     // идущая или последняя проверка — /api/rag/check
+let info = null;       // настройки «до» и «после», модели, промпты — /api/tune
+let after = null;      // настройки «после» с этой страницы
+let report = null;     // идущая или последняя проверка — /api/tune/check
 let asking = null;     // вопрос, на который отвечают сейчас: {controller}
 const open = new Set();                 // раскрытые строки проверки
 
 const num = (x, digits = 1) => x.toLocaleString('ru-RU', {maximumFractionDigits: digits});
 const secs = s => s < 10 ? `${num(s)} с` : s < 60 ? `${Math.round(s)} с`
   : `${Math.floor(Math.round(s) / 60)} мин ${Math.round(s) % 60} с`;
+const gb = bytes => `${num(bytes / 1e9)} ГБ`;
 const plural = (n, [one, few, many]) => n % 10 === 1 && n % 100 !== 11 ? one
   : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20) ? few : many;
 const tokens = n => `${num(n, 0)} ${plural(n, ['токен', 'токена', 'токенов'])}`;
 const esc = s => s.replace(/[&<>"]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'})[c]);
-// Ответ — обычный текст; пункты в квадратных скобках — неброскими метками, **жирный** — жирным.
 const prose = s => esc(s.trim())
   .replace(/\[([^\]\n]{1,60})\]/g, '<span class="ref">$1</span>')
   .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
 
-// Размер текста вопроса (q) и ответа (a): шаг 2 px, выбор общий с первой страницей.
+// Значение параметра с учётом того, что Ollama берёт, если он не задан.
+const value = (s, key) => s[key] ?? info.unset[key] ?? null;
+function show(key, v) {
+  if (key === 'model') {
+    const m = info.models.find(m => m.name === v);
+    // У qwen3.5:4b-bf16 Ollama пишет F16 — название по тегу понятнее.
+    const quant = v.includes('-') ? v.split('-').pop().toUpperCase() : m?.quant;
+    return m ? `${quant} · ${gb(m.size)}` : v;
+  }
+  if (key === 'prompt') return info.prompts[v]?.title ?? v;
+  return v === null ? '∞' : num(v, 2);
+}
+const changed = key => value(info.before, key) !== value(after, key);
+
+// Размер текста вопроса (q) и ответа (a): шаг 2 px, выбор общий со всеми страницами.
 const SIZE_LIMITS = {q: [16, 36], a: [16, 36]};
 const sizes = {q: 22, a: 22};
 try { Object.assign(sizes, JSON.parse(localStorage.getItem('sizes') || '{}')); } catch {}
@@ -341,8 +370,8 @@ function applySizes() {
     document.documentElement.style.setProperty(`--${key}-size`, `${sizes[key]}px`);
   }
   for (const button of document.querySelectorAll('#sizes button')) {
-    const [low, high] = SIZE_LIMITS[button.dataset.size], value = sizes[button.dataset.size];
-    button.disabled = Number(button.dataset.step) < 0 ? value <= low : value >= high;
+    const [low, high] = SIZE_LIMITS[button.dataset.size], v = sizes[button.dataset.size];
+    button.disabled = Number(button.dataset.step) < 0 ? v <= low : v >= high;
   }
   try { localStorage.setItem('sizes', JSON.stringify(sizes)); } catch {}
 }
@@ -351,60 +380,81 @@ for (const button of document.querySelectorAll('#sizes button')) {
 }
 applySizes();
 
-// Карточки ответов: слева — этот компьютер, справа — облако.
+// Карточки ответов: слева — «до», справа — «после».
 const cards = {};
 for (const [side, s] of Object.entries(SIDES)) {
   const card = $('#card').content.firstElementChild.cloneNode(true);
   card.classList.add('wait');
   card.style.setProperty('--tone', s.tone);
-  $('.band', card).innerHTML = `${s.icon}<b>${s.title}</b><span></span>`;
+  $('.band', card).innerHTML = `<b>${s.title}</b><span></span>`;
   $('.pair').append(card);
   cards[side] = card;
 }
+
+// ① Настройки: строка на параметр — «до» и переключатель «после».
+function renderKnobs() {
+  let html = '<div class="top"></div>' + Object.entries(SIDES).map(([, s]) =>
+    `<div class="top side" style="--tone: ${s.tone}"><b>${s.title}</b><span class="meta">${s.sub}</span></div>`).join('');
+  for (const k of KNOBS) {
+    const was = info.before[k.key];
+    const note = was === null && UNSET_NOTE[k.key] ? `<small>${UNSET_NOTE[k.key]}</small>` : '';
+    const text = k.key === 'prompt' ? ' <button class="link" id="show-prompts">текст</button>' : '';
+    html += `<div class="name${changed(k.key) ? ' changed' : ''}"><b>${k.title}</b><code>${k.api}</code></div>`
+      + `<div class="was">${esc(show(k.key, value(info.before, k.key)))}${note}</div>`
+      + `<div class="now-set"><span class="seg">${k.values().map(v =>
+        `<button data-key="${k.key}" data-value='${JSON.stringify(v)}' aria-pressed="${value(after, k.key) === v}">${esc(show(k.key, v))}</button>`).join('')}</span>${text}</div>`;
+  }
+  $('.knobs').innerHTML = html;
+  for (const b of document.querySelectorAll('.seg button')) {
+    b.onclick = () => { after[b.dataset.key] = JSON.parse(b.dataset.value); saveAfter(); };
+  }
+  $('#show-prompts').onclick = () => { $('.prompts').hidden = !$('.prompts').hidden; renderPrompts(); };
+  renderPrompts();
+  $('.band span', cards.before).textContent = show('model', info.before.model);
+  $('.band span', cards.after).textContent = show('model', after.model);
+}
+
+function renderPrompts() {
+  $('.prompts').innerHTML = Object.entries(SIDES).map(([side, s]) => {
+    const p = info.prompts[(side === 'before' ? info.before : after).prompt];
+    return `<div><h3>${s.title}: ${esc(p.title)}</h3><pre>${esc(p.system)}</pre></div>`;
+  }).join('');
+}
+
+function saveAfter() {
+  try { localStorage.setItem('tune-after', JSON.stringify(after)); } catch {}
+  renderKnobs();
+}
+$('#as-before').onclick = () => {      // «как до» — с теми значениями, что Ollama брал сам
+  after = {...info.before};
+  for (const key of Object.keys(info.unset)) after[key] = value(info.before, key);
+  saveAfter();
+};
+$('#as-best').onclick = () => { after = {...info.after}; saveAfter(); };
 
 // Состояние Ollama и моделей — раз в 3 секунды.
 async function refresh() {
   let status = null;
   try { status = await (await fetch('/api/status')).json(); } catch {}
-  const names = [info?.local, info?.embed].filter(Boolean);
-  const loaded = names.filter(n => status?.loaded?.some(m => m.name.replace(/:latest$/, '') === n));
-  const gpu = status?.loaded?.some(m => m.vram > 0);
+  const names = [...new Set([info?.before.model, after?.model].filter(Boolean))];
+  const loaded = names.filter(n => status?.loaded?.some(m => m.name === n));
   const problem = !status ? 'Нет связи с приложением'
-    : info?.error ? info.error
     : !status.running ? 'Ollama не запущен — откройте его из меню «Пуск»' : '';
   $('#status').classList.toggle('bad', Boolean(problem));
-  $('#where').textContent = problem || (loaded.length === names.length
-    ? `модели в памяти · ${gpu ? 'видеокарта' : 'процессор'}` : loaded.length ? `в памяти ${loaded.join(', ')}` : 'модели на диске');
-  $('#status').title = names.join(' + ');
+  $('#where').textContent = problem || (loaded.length ? `в памяти ${loaded.map(n => show('model', n).split(' ·')[0]).join(', ')}` : 'модели на диске');
   $('#engine').textContent = status?.running ? `Ollama ${status.version}` : '';
 }
 
 async function start() {
-  try { info = await (await fetch('/api/rag')).json(); } catch {}
-  for (const side of Object.keys(SIDES)) $('.band span', cards[side]).textContent = info?.[side] ?? '';
-  showNet(info?.cloud_on ?? true);
-  waitFound(`ближайшие по смыслу из ${info?.chunks ?? '…'} фрагментов`);
+  try { info = await (await fetch('/api/tune')).json(); } catch { return; }
+  after = {...info.after};
+  try { Object.assign(after, JSON.parse(localStorage.getItem('tune-after') || '{}')); } catch {}
+  renderKnobs();
+  waitFound();
   refresh();
   setInterval(refresh, 3000);
   loadCheck();
 }
-
-// Облако вкл/выкл: выключенное сервер не зовёт — так видно, что RAG работает без него.
-const net = $('#net');
-const NO_CLOUD = '<svg viewBox="0 0 24 24"><path d="M7 18.5h10.5a4 4 0 0 0 .3-8A6 6 0 0 0 6.2 9.3 4.6 4.6 0 0 0 7 18.5z"/><path d="M3 3l18 18"/></svg>';
-function showNet(on) {
-  net.setAttribute('aria-pressed', on);
-  net.innerHTML = on ? `${CLOUD}Облако` : `${NO_CLOUD}Без облака`;
-  net.title = on ? 'Отключить облако — ответит только этот компьютер' : 'Вернуть облако';
-}
-net.onclick = async () => {
-  const on = net.getAttribute('aria-pressed') !== 'true';
-  try {
-    const res = await fetch('/api/rag/cloud', {method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({on})});
-    showNet((await res.json()).cloud_on);
-  } catch {}
-};
 
 // Список контрольных вопросов под полем: выбрать — подставить в поле.
 pick.onclick = () => toggleList(list.hidden);
@@ -431,6 +481,7 @@ function buttons() {
 
 go.onclick = () => asking ? asking.controller.abort() : ask();
 
+// Вопрос уходит по очереди: две модели сразу делили бы процессор, и время было бы нечестным.
 async function ask() {
   const text = question.value.trim();
   if (!text || asking || report?.running) return;
@@ -438,9 +489,14 @@ async function ask() {
   const current = asking = {controller: new AbortController()};
   buttons();
   waitFound('ищет…');
-  await Promise.all(Object.keys(SIDES).map(side => answer(side, text, current)));
-  if (shown !== current) {               // до фрагментов не дошло: остановили или ошибка — она в карточках
-    $('#found-meta').textContent = current.controller.signal.aborted ? 'остановлено' : 'не получилось';
+  for (const card of Object.values(cards)) {
+    card.className = 'card wait';
+    $('.answer', card).innerHTML = $('.metrics', card).innerHTML = '';
+    $('.verdict', card).hidden = $('.request', card).hidden = true;
+  }
+  for (const side of Object.keys(SIDES)) {
+    if (current.controller.signal.aborted) break;
+    await answer(side, text, current);
   }
   asking = null;
   buttons();
@@ -456,50 +512,33 @@ async function* lines(res) {           // ответ сервера — стро
   }
 }
 
-function waitFound(meta) {               // пустые места под фрагменты — до ответа поиска
-  $('#found-meta').textContent = meta;
-  $('.frags').innerHTML = '<div class="frag wait"></div>'.repeat(info?.top ?? 3);
+function waitFound(text = '') {
+  $('.found').innerHTML = `Нашли в ПДД: <span>${text}</span>`;
 }
-
-let shown = null;                        // на какой вопрос уже нарисованы фрагменты
-function showFound(event, current) {     // фрагменты приходят с обоими ответами — рисуем один раз
-  if (shown === current) return;
-  shown = current;
-  $('#found-meta').textContent = `${event.hits.length} из ${info?.chunks ?? '…'} фрагментов · ${secs(event.seconds)} · на этом компьютере`;
-  $('.frags').replaceChildren(...event.hits.map(h => {
-    const frag = document.createElement('button');
-    frag.className = 'frag';
-    frag.title = 'Показать фрагмент целиком';
-    frag.innerHTML = `<span class="frag-head"><span class="label">${esc(h.label)}</span>`
-      + `<span class="score" title="Сходство вопроса и фрагмента: косинус векторов">${num(h.score, 2)}</span></span>`
-      + `<span class="place" title="${esc(h.title)}">${esc(h.section || h.title)}</span>`
-      + `<p>${esc(h.text.replace(/^#+ .*\n*/gm, ''))}</p>`;      // заголовки раздела уже есть строкой выше
-    frag.onclick = () => frag.classList.toggle('open');
-    return frag;
-  }));
+function showFound(event) {               // фрагменты одни и те же у обоих ответов
+  $('.found').innerHTML = 'Нашли в ПДД: ' + event.hits.map(h =>
+    `<span class="chip" title="${esc(h.text.replace(/^#+ .*\n*/gm, '').slice(0, 600))}">${esc(h.label)}</span>`).join('')
+    + `<span>· ${secs(event.seconds)}</span>`;
 }
 
 async function answer(side, text, current) {
   const card = cards[side], out = $('.answer', card), metrics = $('.metrics', card);
-  card.classList.remove('wait', 'done', 'err');
+  card.classList.remove('wait');
   card.classList.add('run');
-  out.innerHTML = '';
-  $('.verdict', card).hidden = $('.request', card).hidden = true;
   const started = performance.now(), since = () => (performance.now() - started) / 1000;
-  let said = '', phase = 'читает фрагменты…', done = null;
+  let said = '', phase = 'читает промпт…', done = null;
   const live = () => { metrics.innerHTML = `<span class="time">${secs(since())}</span><span>${phase}</span>`; };
   live();
   const timer = setInterval(live, 200);
   try {
-    const res = await fetch('/api/rag/ask', {
+    const res = await fetch('/api/tune/ask', {
       method: 'POST', headers: {'Content-Type': 'application/json'}, signal: current.controller.signal,
-      body: JSON.stringify({question: text, where: side}),
+      body: JSON.stringify({question: text, settings: side === 'before' ? info.before : after}),
     });
     if (!res.ok) throw new Error((await res.json()).detail ?? `Ошибка ${res.status}`);
     for await (const event of lines(res)) {
-      if (event.type === 'found') showFound(event, current);
+      if (event.type === 'found') { if (side === 'before') showFound(event); }
       else if (event.type === 'request') showRequest(card, event);
-      else if (event.type === 'think') phase = 'думает…';
       else if (event.type === 'text') {
         phase = 'пишет…';
         said += event.text;
@@ -509,9 +548,14 @@ async function answer(side, text, current) {
     }
     if (!done) throw new Error('Ответ оборвался');
     clearInterval(timer);
-    const load = done.load > 1 ? ` · загрузка ${secs(done.load)}` : '';
-    metrics.innerHTML = `<span class="time">${secs(since())}</span>`
-      + `<span>${num(done.speed)} токенов/сек · ${tokens(done.tokens)}${load}</span>`;
+    // Время — без загрузки модели в память: она бывает только после простоя или смены настроек.
+    const cached = done.reading < 0.5 && done.prompt > 100 ? ' — из кэша' : '';
+    const load = done.load > 1 ? `<span>+ загрузка модели ${secs(done.load)}</span>` : '';
+    const cut = done.cut ? `<span>оборван на ${tokens(done.tokens)}</span>` : '';
+    metrics.innerHTML = `<span class="time">${secs(since() - done.load)}</span>`
+      + `<span>промпт ${tokens(done.prompt)} · ${secs(done.reading)}${cached}</span>`
+      + `<span>ответ ${tokens(done.tokens)} · ${secs(done.writing)} · ${num(done.speed)} токенов/сек</span>`
+      + `<span>память ${gb(done.memory)}</span>${load}${cut}`;
     showVerdict(card, done.check);
     card.classList.replace('run', 'done');
   } catch (e) {
@@ -528,7 +572,7 @@ async function answer(side, text, current) {
 
 function showRequest(card, {url, body}) {  // что ушло модели: адрес и тело запроса
   const details = $('.request', card);
-  $('summary', details).textContent = `Запрос → ${new URL(url).host}`;
+  $('summary', details).textContent = `Запрос → ${new URL(url).host} · ${JSON.stringify(body.options)}`;
   $('pre', details).textContent = `POST ${url}\n${JSON.stringify(body, null, 2)}`;
   details.hidden = false;
 }
@@ -541,16 +585,18 @@ function showVerdict(card, check) {        // только у контрольн
   verdict.textContent = check.ok ? '✓ верно: все ключевые факты на месте' : `✗ не хватает: ${check.missing.join(' · ')}`;
 }
 
-// ③ Проверка: итог по моделям и строка на каждый вопрос.
+// ③ Проверка: итог «до» и «после» и строка на каждый вопрос.
 run.onclick = async () => {
   const method = report?.running ? 'DELETE' : 'POST';
-  try { report = await (await fetch('/api/rag/check', {method})).json(); } catch { return; }
+  const options = method === 'POST'
+    ? {method, headers: {'Content-Type': 'application/json'}, body: JSON.stringify({after})} : {method};
+  try { report = await (await fetch('/api/tune/check', options)).json(); } catch { return; }
   renderCheck();
   if (report.running) setTimeout(loadCheck, 1500);
 };
 
 async function loadCheck() {
-  try { report = await (await fetch('/api/rag/check')).json(); } catch { return; }
+  try { report = await (await fetch('/api/tune/check')).json(); } catch { return; }
   renderCheck();
   if (report.running) setTimeout(loadCheck, 1500);
 }
@@ -559,6 +605,20 @@ function mark(a, now) {
   if (!a) return `<span class="mark${now ? ' now' : ''}"></span>`;
   if (a.error) return `<span class="mark fail" title="${esc(a.error)}">!</span>`;
   return a.ok ? '<span class="mark ok">✓</span>' : '<span class="mark bad">✗</span>';
+}
+
+// Настройки, с которыми шла проверка, — коротко под заголовком колонки.
+function brief(s) {
+  if (!s) return '';
+  return [show('model', s.model), `t ${num(s.temperature, 2)}`, `штраф ${num(value(s, 'presence_penalty'), 2)}`,
+    `${show('num_predict', value(s, 'num_predict'))} ток.`, `контекст ${num(value(s, 'num_ctx'), 0)}`,
+    info.prompts[s.prompt]?.title].join(' · ');
+}
+
+function delta(a, b, unit, lowerIsBetter) {   // насколько «после» лучше или хуже «до»
+  if (a == null || b == null || Math.abs(b - a) < 0.05) return '';
+  const better = lowerIsBetter ? b < a : b > a;
+  return `<span class="delta${better ? '' : ' worse'}">${b > a ? '+' : '−'}${num(Math.abs(b - a))}${unit}</span>`;
 }
 
 function renderCheck() {
@@ -582,37 +642,46 @@ function renderCheck() {
     : 'ещё не проводилась';
 
   const sides = Object.entries(SIDES);
-  const head = s => `<div class="side top" style="--tone: ${s.tone}">${s.icon}<b>${s.title}</b></div>`;
-  const cell = html => html ?? '<span class="big">—</span>';
+  const [b, a] = [summary.before, summary.after];
+  const cloud = info?.cloud ? `облако в дне 28 — ${info.cloud.correct} из ${info.cloud.done}` : '';
   const rows = [
-    ['Качество', 'верных ответов', s => s.done
-      ? `<span class="big">${s.correct}<small>из ${s.done}${s.errors ? ` · сбоев ${s.errors}` : ''}</small></span>` : null],
-    ['Скорость', 'на ответ, с поиском', s => s.seconds != null
-      ? `<span class="big">${secs(s.seconds)}<small>${num(s.speed)} токенов/сек</small></span>` : null],
+    ['Качество', `верных ответов${cloud ? ` · ${cloud}` : ''}`, s => s.done
+      ? `${s.correct}<small>из ${s.done}${s.errors ? ` · сбоев ${s.errors}` : ''}</small>` : null,
+      () => delta(b.correct, a.correct, '', false)],
+    ['Время ответа', 'в среднем, без загрузки модели', s => s.seconds != null
+      ? `${secs(s.seconds)}<small>${num(s.speed)} токенов/сек</small>` : null,
+      () => delta(b.seconds, a.seconds, ' с', true)],
+    ['Память', 'модель в Ollama', s => s.memory ? gb(s.memory) : null,
+      () => delta(b.memory && b.memory / 1e9, a.memory && a.memory / 1e9, ' ГБ', true)],
     ['Стабильность', `вопросов с одним итогом во всех ${runs} прогонах`, s => s.full
-      ? `<span class="big">${s.stable}<small>из ${s.full}</small></span>` : null],
+      ? `${s.stable}<small>из ${s.full}</small>` : null, () => ''],
   ];
-  // Где сейчас идёт проверка у каждой модели: прогоны по кругу — первый пустой ответ по порядку.
-  const now = {};
-  for (const [side] of sides) {
-    for (let r = 0; report.running && r < runs && now[side] == null; r++) {
+  // Где сейчас идёт проверка: прогон за прогоном, сначала все «до», потом все «после».
+  let now = null;
+  for (let r = 0; report.running && r < runs && !now; r++) {
+    for (const [side] of sides) {
       const i = questions.findIndex((_, k) => !results[side][k]?.[r]);
-      if (i >= 0) now[side] = `${i}:${r}`;
+      if (i >= 0) { now = `${side}:${i}:${r}`; break; }
     }
   }
-  let html = '<div class="top"></div>' + sides.map(([, s]) => head(s)).join('');
-  for (const [title, hint, value] of rows) {
+  const settings = report.settings ?? {before: info?.before, after};
+  let html = '<div class="top"></div>' + sides.map(([side, s]) =>
+    `<div class="side top" style="--tone: ${s.tone}"><b>${s.title}</b><span>${esc(brief(settings[side]))}</span></div>`).join('');
+  for (const [title, hint, cellOf, change] of rows) {
     html += `<div class="what"><b>${title}</b><span>${hint}</span></div>`
-      + sides.map(([side]) => `<div>${cell(value(summary[side]))}</div>`).join('');
+      + sides.map(([side]) => {
+        const v = cellOf(summary[side]);
+        return `<div><span class="big">${v ?? '—'}</span>${v && side === 'after' && a.done && b.done ? change() : ''}</div>`;
+      }).join('');
   }
   questions.forEach((q, i) => {
     const isOpen = open.has(i);
     html += `<div class="q${isOpen ? ' open' : ''}" data-i="${i}"><b>${i + 1}</b><span>${esc(q.question)}</span></div>`;
     for (const [side] of sides) {
       const row = results[side][i] ?? [];
-      const timed = row.filter(a => a && !a.error);
-      const avg = timed.length ? secs(timed.reduce((t, a) => t + a.seconds, 0) / timed.length) : '';
-      html += `<div class="marks">${Array.from({length: runs}, (_, r) => mark(row[r], now[side] === `${i}:${r}`)).join('')}`
+      const timed = row.filter(x => x && !x.error);
+      const avg = timed.length ? secs(timed.reduce((t, x) => t + x.seconds, 0) / timed.length) : '';
+      html += `<div class="marks">${Array.from({length: runs}, (_, r) => mark(row[r], now === `${side}:${i}:${r}`)).join('')}`
         + `<span class="sec">${avg}</span></div>`;
     }
     if (isOpen) {
@@ -635,7 +704,7 @@ function runAnswer(a) {
   if (!a) return '';
   if (a.error) return `<div class="run-answer fail"><span class="mark fail">!</span><div>${esc(a.error)}<small>${secs(a.seconds)}</small></div></div>`;
   const missing = a.ok ? '' : ` · не хватает: ${a.missing.map(esc).join(' · ')}`;
-  return `<div class="run-answer">${mark(a)}<div>${prose(a.answer)}<small>${secs(a.seconds)}${missing}</small></div></div>`;
+  return `<div class="run-answer">${mark(a)}<div>${prose(a.answer)}<small>${secs(a.seconds)} · ${tokens(a.tokens)}${missing}</small></div></div>`;
 }
 
 question.value = '';

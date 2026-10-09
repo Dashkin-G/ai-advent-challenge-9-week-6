@@ -5,7 +5,9 @@
 Ollama: сервер и запущенный им llama-server, который держит модель в памяти.
 """
 import platform
+import re
 import time
+from pathlib import Path
 
 import psutil
 
@@ -18,7 +20,10 @@ def _cpu_name() -> str:
         import winreg
         with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"HARDWARE\DESCRIPTION\System\CentralProcessor\0") as key:
             name = winreg.QueryValueEx(key, "ProcessorNameString")[0]
-    except (ImportError, OSError):
+    except ImportError:                      # Linux — сервер дня 30: имя процессора в /proc/cpuinfo
+        found = re.search(r"^model name\s*:\s*(.+)$", Path("/proc/cpuinfo").read_text(), re.M)
+        name = found[1] if found else platform.processor()
+    except OSError:
         name = platform.processor()
     return name.split(" w/")[0].strip()      # «… w/ Radeon 780M Graphics» — без встроенной графики
 

@@ -7,20 +7,33 @@ Ollama — сервер на этом же компьютере. Вопрос у
 """
 import json
 import re
+import ssl
 from collections.abc import AsyncIterator
 
+import certifi
 import httpx
 
 from . import config
+
+# Сертификаты читаются один раз: иначе каждый новый клиент httpx тратит на них ~150 мс.
+_TLS = ssl.create_default_context(cafile=certifi.where())
 
 
 class LLMError(RuntimeError):
     """Ошибка на пути к ответу (Ollama, облако, индекс) — уже человеческими словами."""
 
 
+class TooLong(LLMError):
+    """Промпт не помещается в контекст: Ollama не стал молча обрезать начало, а отказал (truncate: false)."""
+
+    def __init__(self, tokens: int, limit: int):
+        super().__init__(f"Запрос длиннее контекста модели: токенов — {tokens}, лимит — {limit}")
+        self.tokens, self.limit = tokens, limit
+
+
 def _client(read: float | None = 5) -> httpx.AsyncClient:
     # Ollama — на этом компьютере: системный прокси (HTTP_PROXY) к нему не применяем.
-    return httpx.AsyncClient(base_url=config.OLLAMA_URL, trust_env=False,
+    return httpx.AsyncClient(base_url=config.OLLAMA_URL, trust_env=False, verify=_TLS,
                              timeout=httpx.Timeout(5, read=read))
 
 
@@ -44,12 +57,16 @@ async def status() -> dict:
     }
 
 
-async def ask(model: str, messages: list[dict], think: bool, options: dict | None = None) -> AsyncIterator[dict]:
+async def ask(model: str, messages: list[dict], think: bool, options: dict | None = None,
+              truncate: bool = True) -> AsyncIterator[dict]:
     """Ответ по кусочкам на диалог: messages — [{role, content, images?}], последнее — вопрос.
     options — параметры генерации Ollama (temperature, num_predict, num_ctx…); не заданы —
-    рекомендованные Qwen. События: request — что ушло в Ollama; think — ход мысли; text — ответ;
-    done — счётчики. Ошибка — LLMError."""
+    рекомендованные Qwen. truncate=False — длиннее контекста не обрезать, а отказать (TooLong).
+    События: request — что ушло в Ollama; think — ход мысли; text — ответ; done — счётчики.
+    Ошибка — LLMError."""
     body = {"model": model, "messages": messages, "think": think, "stream": True}
+    if not truncate:
+        body["truncate"] = False
     if options is not None:
         body["options"] = options
     elif not think:
@@ -61,7 +78,7 @@ async def ask(model: str, messages: list[dict], think: bool, options: dict | Non
         async with _client(read=None) as client, client.stream("POST", "/api/chat", json=body) as response:
             if response.status_code != 200:
                 await response.aread()
-                raise LLMError(_explain(response, model))
+                raise _error(response, model)
             async for line in response.aiter_lines():
                 if not line:
                     continue
@@ -91,7 +108,7 @@ async def embed(texts: list[str]) -> list[list[float]]:
     except httpx.HTTPError as e:
         raise LLMError(f"Ollama не отвечает: {e.__class__.__name__}") from e
     if response.status_code != 200:
-        raise LLMError(_explain(response, config.EMBED_MODEL))
+        raise _error(response, config.EMBED_MODEL)
     return response.json()["embeddings"]
 
 
@@ -113,17 +130,20 @@ async def unload(model: str) -> None:
         pass
 
 
-def _explain(response: httpx.Response, model: str) -> str:
+def _error(response: httpx.Response, model: str) -> LLMError:
     if response.status_code == 404:
-        return f"Модели {model} нет — скачайте: ollama pull {model}"
+        return LLMError(f"Модели {model} нет — скачайте: ollama pull {model}")
     try:
         detail = response.json()["error"]
     except ValueError:
         detail = response.text[:200]
     need = re.search(r"more system memory \(([\d.]+) GiB\) than is available \(([\d.]+) GiB\)", detail)
     if need:
-        return f"Модели {model} нужно {need[1]} ГБ памяти, свободно {need[2]} ГБ — закройте лишние программы"
-    return f"Ollama ответил {response.status_code}: {detail}"
+        return LLMError(f"Модели {model} нужно {need[1]} ГБ памяти, свободно {need[2]} ГБ — закройте лишние программы")
+    over = re.search(r"request \((\d+) tokens\) exceeds the available context size \((\d+) tokens\)", detail)
+    if over:
+        return TooLong(int(over[1]), int(over[2]))
+    return LLMError(f"Ollama ответил {response.status_code}: {detail}")
 
 
 def _counters(chunk: dict) -> dict:

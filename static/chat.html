@@ -1,0 +1,601 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Приватный сервис</title>
+<link rel="icon" href="data:,">
+<style>
+  /* Стиль — «инженерный блокнот», как у остальных страниц. В проверках: индиго — ответ пришёл,
+     горчичный — отказ лимита (так и задумано), красный — сбой. */
+  :root {
+    --paper: #f4efe6; --card: #fffdf9; --ink: #23264d; --soft: #50557a;
+    --accent: #e5603b; --code: #f0ebe1; --live: #2f6fd8; --err: #b42318; --err-bg: #fbe3dc;
+    --limit: #f2d37a; --mine: #a9cdee;
+    --line: 2px solid var(--ink); --faint: 2px solid rgba(35, 38, 77, .12);
+    --display: Bahnschrift, "Segoe UI", sans-serif;
+    --size: 22px;                              /* размер текста чата — меняется регулятором */
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    display: flex; flex-direction: column; gap: 20px; padding: 20px 44px 24px;
+    color: var(--ink); font: 21px/1.45 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+    background: var(--paper) radial-gradient(rgba(35, 38, 77, .09) 1.3px, transparent 1.6px) 0 0 / 24px 24px;
+  }
+  button, input, textarea { font: inherit; color: inherit; }
+  button { cursor: pointer; }
+  button:disabled { cursor: default; opacity: .45; }
+  :focus-visible { outline: 3px dashed var(--ink); outline-offset: 3px; }
+  [hidden] { display: none !important; }
+  .msgs, .tip { scrollbar-width: thin; scrollbar-color: var(--soft) transparent; }
+
+  /* Кнопка с жёсткой тенью: при нажатии вдавливается */
+  .press { --shade: var(--ink); border: var(--line); box-shadow: 3px 3px 0 var(--shade); transition: transform .08s, box-shadow .08s; }
+  .press:not(:disabled):hover { box-shadow: 4px 4px 0 var(--shade); }
+  .press:not(:disabled):active { transform: translate(2px, 2px); box-shadow: 1px 1px 0 var(--shade); }
+  .press:disabled { box-shadow: none; }
+  .main {
+    --shade: var(--accent); flex: none; padding: 10px 34px; border-radius: 12px;
+    background: var(--ink); color: var(--card); font: 600 26px/1.2 var(--display); box-shadow: 5px 5px 0 var(--shade);
+  }
+  .main:not(:disabled):hover { box-shadow: 6px 6px 0 var(--shade); }
+  .main.stop { --shade: var(--ink); background: var(--card); color: var(--ink); }
+  .small { padding: 4px 16px; border-radius: 10px; background: var(--card); font-size: 20px; font-weight: 600; }
+
+  header { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+  .logo { width: 46px; height: 46px; flex: none; }
+  h1 { margin: 0; font: 600 40px/1 var(--display); white-space: nowrap; }
+  #engine { padding: 2px 10px; border: 2px solid rgba(35, 38, 77, .3); border-radius: 6px; color: var(--soft); font-size: 19px; }
+  #engine:empty, #machine:empty { display: none; }
+  #machine { color: var(--soft); font-size: 19px; }
+  #machine b { color: var(--ink); }
+  .chip { display: flex; align-items: center; gap: 10px; padding: 6px 16px; border: var(--line); border-radius: 10px; background: var(--card); }
+  #sizes { margin-left: auto; gap: 8px; padding: 5px 12px; font-size: 20px; }
+  #sizes .aa { margin-right: 4px; font: 700 24px/1 var(--display); }
+  #sizes button {
+    width: 34px; height: 34px; border: 2px solid var(--ink); border-radius: 8px; background: var(--paper);
+    font: 700 22px/1 var(--display);
+  }
+  .dot { flex: none; width: 14px; height: 14px; border-radius: 50%; background: var(--live); animation: live 2s infinite; }
+  @keyframes live { 0% { box-shadow: 0 0 0 0 rgba(47, 111, 216, .5); } 70%, 100% { box-shadow: 0 0 0 10px rgba(47, 111, 216, 0); } }
+  #status { font-size: 19px; font-weight: 600; }
+  #status.bad { border-color: var(--err); background: var(--err-bg); color: var(--err); }
+  #status.bad .dot { background: var(--err); animation: none; }
+
+  .help { position: relative; flex: none; }
+  .help-icon { width: 42px; height: 42px; border-radius: 50%; background: var(--card); font: 700 24px/1 var(--display); }
+  .tip {                                 /* мини-справка: видна, пока мышь над «?» */
+    display: none; position: absolute; left: 0; top: calc(100% + 12px); z-index: 20; width: min(640px, 90vw); padding: 16px 22px;
+    border: var(--line); border-radius: 12px; background: var(--card); box-shadow: 4px 4px 0 var(--ink);
+    font-size: 19px; line-height: 1.45;
+  }
+  .help:hover .tip, .help:focus-within .tip { display: block; }
+  .tip::before { content: ""; position: absolute; left: 0; right: 0; top: -16px; height: 16px; }   /* мышь доходит до справки */
+  .tip h3 { margin: 0 0 4px; font: 700 21px/1.3 var(--display); }
+  .tip p, .tip ul { margin: 0 0 12px; }
+  .tip ul { padding-left: 22px; }
+  .tip :last-child { margin-bottom: 0; }
+
+  /* Карточка: цветная полоса с заголовком, ниже содержимое */
+  .card {
+    display: flex; flex-direction: column; min-height: 0; overflow: hidden;
+    border: var(--line); border-radius: 14px; background: var(--card); box-shadow: 4px 4px 0 var(--ink);
+  }
+  .band { display: flex; align-items: center; gap: 14px; padding: 8px 18px 8px 22px; border-bottom: var(--line); background: var(--tone); }
+  .band b { font: 700 22px/1.1 var(--display); letter-spacing: .06em; text-transform: uppercase; }
+  .band .gap { flex: 1; }
+
+  /* Чат */
+  #chat { --tone: var(--mine); flex: 1; min-height: 300px; }
+  .msgs { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 14px; padding: 18px 24px; }
+  .empty { margin: auto; color: var(--soft); }
+  .msg { max-width: 80%; padding: 10px 16px; border-radius: 14px; font-size: var(--size); white-space: pre-wrap; overflow-wrap: anywhere; }
+  .msg.user { align-self: flex-end; border: var(--line); border-radius: 14px 14px 4px 14px; background: var(--mine); }
+  .msg.model { align-self: flex-start; border: 2px solid rgba(35, 38, 77, .25); border-radius: 14px 14px 14px 4px; background: var(--paper); }
+  .msg.wait { border-style: dashed; color: var(--soft); }
+  .msg.run { border-color: var(--live); }
+  .msg.err { border-color: var(--err); background: var(--err-bg); color: var(--err); font-weight: 600; }
+  .msg .stats { margin-top: 6px; color: var(--soft); font-size: 17px; white-space: normal; }
+  .msg.err .stats { display: none; }
+  code, pre { font-family: Consolas, "Cascadia Mono", monospace; font-size: .85em; }
+  .msg pre { margin: 6px 0; padding: 10px 14px; border-radius: 10px; background: var(--code); white-space: pre-wrap; }
+  .send { display: flex; align-items: flex-end; gap: 16px; padding: 14px 22px; border-top: var(--faint); }
+  #input {
+    flex: 1; min-width: 0; min-height: 52px; max-height: 30vh; padding: 10px 14px; border: var(--line); border-radius: 12px;
+    background: var(--paper); font-size: var(--size); line-height: 1.35; resize: none; field-sizing: content;
+  }
+  #input:focus { outline: none; box-shadow: 3px 3px 0 var(--ink); }
+  #input::placeholder { color: var(--soft); }
+
+  /* Проверка: строка на проверку — что проверяем, ▶, плашки запросов, итог */
+  #checks { --tone: var(--limit); flex: none; }
+  .row {
+    display: grid; grid-template-columns: 380px 50px minmax(0, 1fr) 340px; align-items: center; gap: 18px;
+    padding: 6px 22px; border-top: var(--faint);
+  }
+  .band + .row { border-top: none; }
+  .what b { display: block; font: 600 22px/1.2 var(--display); }
+  .what span { color: var(--soft); font-size: 17px; }
+  .play { width: 42px; height: 42px; border-radius: 50%; background: var(--card); font-size: 17px; }
+  .pills { display: flex; flex-wrap: wrap; gap: 8px; min-height: 36px; }
+  .pill {
+    display: inline-grid; place-items: center; min-width: 62px; height: 34px; padding: 0 10px; border-radius: 8px;
+    border: 2px dashed rgba(35, 38, 77, .3); color: var(--soft); font: 700 17px/1 var(--display); white-space: nowrap;
+  }
+  .pill.run { border: 2px solid var(--live); color: var(--ink); animation: live 2s infinite; }
+  .pill.ok { border: none; background: var(--ink); color: var(--card); }
+  .pill.limit { border: none; background: var(--limit); color: var(--ink); }
+  .pill.bad { border: none; background: var(--err); color: var(--card); }
+  .big { font: 700 34px/1 var(--display); }
+  .big small { display: block; margin-top: 4px; color: var(--soft); font: 400 17px/1.3 "Segoe UI Variable Text", "Segoe UI", sans-serif; }
+  .api { padding: 4px 22px 10px; border-top: var(--faint); }
+  .api summary { cursor: pointer; color: var(--soft); font-size: 19px; }
+  .api pre { margin: 8px 0; padding: 12px 16px; border-radius: 10px; background: var(--code); font-size: 16px; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+  /* Вход по ключу: пока ключа нет, видна только эта карточка */
+  #gate { display: none; }
+  body.locked > :not(header, #gate), body.locked #logout { display: none; }
+  body.locked #gate { display: flex; margin: 10vh auto 0; width: min(560px, 100%); }
+  #gate form { display: flex; flex-direction: column; gap: 14px; padding: 22px 24px; }
+  #gate input { padding: 10px 14px; border: var(--line); border-radius: 12px; background: var(--paper); font: 20px Consolas, monospace; }
+  #gate-error { min-height: 1.4em; color: var(--err); font-weight: 600; }
+
+  @media (max-width: 1300px) {
+    .row { grid-template-columns: minmax(0, 1fr) 50px; }
+    .pills, .big { grid-column: 1 / -1; }
+    .pills:empty, .big:empty { display: none; }
+  }
+  @media (max-width: 800px) {                /* телефон: всё одной колонкой, страница прокручивается */
+    html, body { height: auto; }
+    body { gap: 14px; padding: 12px 12px 20px; }
+    h1 { font-size: 30px; }
+    #engine, #machine { display: none; }
+    #sizes { margin-left: 0; }
+    #chat { flex: none; height: 75vh; }
+    .msg { max-width: 92%; }
+    .msgs, .send, .row { padding-left: 14px; padding-right: 14px; }
+    .main { padding: 10px 20px; font-size: 22px; }
+    .band .main { padding: 6px 14px; font-size: 19px; }
+    #go .label { display: none; }            /* на узком экране у кнопки только ▶ */
+  }
+</style>
+</head>
+<body>
+<header>
+  <svg class="logo" viewBox="0 0 54 54" aria-hidden="true">
+    <g stroke="#23264d" stroke-width="3" stroke-linecap="round">
+      <path d="M18 4v8M27 4v8M36 4v8M18 42v8M27 42v8M36 42v8M4 18h8M4 27h8M4 36h8M42 18h8M42 27h8M42 36h8"/>
+      <rect x="12" y="12" width="30" height="30" rx="5" fill="#e5603b"/>
+      <rect x="20" y="20" width="14" height="14" rx="2" fill="#f2d37a"/>
+    </g>
+  </svg>
+  <h1>Приватный сервис</h1>
+  <span id="engine"></span>
+  <div class="help">
+    <button class="help-icon press" aria-label="Справка">?</button>
+    <div class="tip" role="tooltip">
+      <h3>Как устроено</h3>
+      <p>Браузер → HTTPS → сервис: ключ, лимиты, очередь → Ollama на этом же сервере → модель.
+        Ollama слушает только 127.0.0.1 — снаружи до модели можно дойти лишь через сервис.</p>
+      <h3>Ограничения</h3>
+      <ul id="tip-limits"></ul>
+      <h3>HTTP API</h3>
+      <p><code>POST /api/chat</code> — переписка <code>{"messages": [{"role", "content"}], "stream"}</code>,
+        <code>GET /api/status</code> — модель, сервер, лимиты, очередь. Заголовок —
+        <code>Authorization: Bearer &lt;ключ&gt;</code>.</p>
+    </div>
+  </div>
+  <span id="machine"></span>
+  <div id="sizes" class="chip" title="Размер текста">
+    <span class="aa">Aa</span>
+    <button data-step="-2" aria-label="Мельче">−</button>
+    <button data-step="2" aria-label="Крупнее">+</button>
+  </div>
+  <div id="status" class="chip"><span class="dot"></span><span id="where">…</span></div>
+  <button id="logout" class="small press" title="Забыть ключ на этом устройстве">выйти</button>
+</header>
+
+<section id="gate" class="card" style="--tone: var(--limit)">
+  <div class="band"><b>Ключ доступа</b></div>
+  <form>
+    <input id="key" type="password" autocomplete="current-password" placeholder="ключ из /etc/llm.env на сервере">
+    <button class="main press">Войти</button>
+    <div id="gate-error"></div>
+  </form>
+</section>
+
+<section id="chat" class="card">
+  <div class="band"><b>Чат</b><span class="gap"></span><button id="new" class="small press">Новый диалог</button></div>
+  <div class="msgs"><div class="empty">Спросите что-нибудь — ответит модель на сервере</div></div>
+  <div class="send">
+    <textarea id="input" rows="1" placeholder="Сообщение · Enter — отправить"></textarea>
+    <button id="go" class="main press"></button>
+  </div>
+</section>
+
+<section id="checks" class="card">
+  <div class="band"><b>Проверка</b><span class="gap"></span><button id="all" class="main press"></button></div>
+  <details class="api"><summary>HTTP API: тот же запрос из терминала</summary>
+    <pre id="curl"></pre><button id="copy" class="small press">копировать с ключом</button></details>
+</section>
+
+<template id="row">
+  <div class="row">
+    <div class="what"><b></b><span></span></div>
+    <button class="play press" title="Запустить">▶︎</button>
+    <div class="pills"></div>
+    <div class="big"></div>
+  </div>
+</template>
+
+<script>
+const PLAY = '▶︎', STOP = '■';
+const HISTORY = 10;                          // столько последних сообщений уходит модели
+// Стабильность — шесть вопросов сразу; каждый ждёт ответа в одно предложение.
+const LOAD = ['Что такое HTTP?', 'Зачем сервису ключ доступа?', 'Что такое очередь запросов?',
+  'Что такое контекст языковой модели?', 'Почему локальная модель приватна?', 'Что такое rate limit?']
+  .map(q => `${q} Ответь одним предложением.`);
+const BURST = 12;                            // столько запросов разом в проверке лимита частоты
+
+const $ = (s, root = document) => root.querySelector(s);
+const num = (x, digits = 1) => x.toLocaleString('ru-RU', {maximumFractionDigits: digits});
+const secs = s => s < 10 ? `${num(s)} с` : s < 60 ? `${Math.round(s)} с`
+  : `${Math.floor(Math.round(s) / 60)} мин ${Math.round(s) % 60} с`;
+const plural = (n, [one, few, many]) => n % 10 === 1 && n % 100 !== 11 ? one
+  : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20) ? few : many;
+const tokens = n => `${num(n, 0)} ${plural(n, ['токен', 'токена', 'токенов'])}`;
+const since = t => (performance.now() - t) / 1000;
+const esc = s => s.replace(/[&<>]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;'})[c]);
+
+// Размер текста чата: шаг 2 px, выбор запоминается в браузере.
+let size = 22;
+try { size = Number(localStorage.getItem('chat-size')) || 22; } catch {}
+function applySize() {
+  size = Math.min(36, Math.max(16, size));
+  document.documentElement.style.setProperty('--size', `${size}px`);
+  for (const b of document.querySelectorAll('#sizes button')) b.disabled = Number(b.dataset.step) < 0 ? size <= 16 : size >= 36;
+  try { localStorage.setItem('chat-size', size); } catch {}
+}
+for (const b of document.querySelectorAll('#sizes button')) b.onclick = () => { size += Number(b.dataset.step); applySize(); };
+applySize();
+
+// Ответ модели — Markdown с формулами LaTeX. Показываем жирный, код, списки,
+// формулы переводим в обычный текст: 80 \text{ км} \times 2 → 80 км × 2.
+const SYMBOLS = {times: '×', cdot: '·', div: '÷', approx: '≈', ne: '≠', neq: '≠', le: '≤', leq: '≤', ge: '≥',
+  geq: '≥', pm: '±', to: '→', rightarrow: '→', Rightarrow: '⇒', quad: ' ', qquad: ' ', ',': ' ', ';': ' ',
+  '%': '%', pi: 'π', infty: '∞', circ: '°', Delta: 'Δ', ldots: '…', cdots: '…'};
+const tex = s => s
+  .replace(/\\(?:text|mathrm|mathbf|textbf|operatorname)\{([^{}]*)\}/g, '$1')
+  .replace(/\\[dt]?frac\{([^{}]*)\}\{([^{}]*)\}/g, '$1/$2')
+  .replace(/\\sqrt\{([^{}]*)\}/g, '√$1')
+  .replace(/\^\{([^{}]*)\}|\^(\w)/g, (_, a, b) => `<sup>${a ?? b}</sup>`)
+  .replace(/_\{([^{}]*)\}|_(\w)/g, (_, a, b) => `<sub>${a ?? b}</sub>`)
+  .replace(/\\(?:left|right)\b/g, '')
+  .replace(/\\([a-zA-Z]+|[,;%])/g, (m, name) => SYMBOLS[name] ?? m)
+  .replace(/[{}]/g, '')
+  .replace(/ {2,}/g, ' ');
+const math = s => s
+  .replace(/\$\$([\s\S]+?)\$\$|\\\[([\s\S]+?)\\\]/g, (_, a, b) => tex(a ?? b).trim())
+  .replace(/\$\$([^$]*)$/, (_, a) => tex(a))                       // формула ещё печатается
+  .replace(/\\\(([\s\S]+?)\\\)|\$([^$\n]+?)\$/g, (_, a, b) => tex(a ?? b));
+const prose = s => math(esc(s))
+  .replace(/`([^`\n]+)`/g, '<code>$1</code>')
+  .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
+  .replace(/^#{1,6} +(.+)$/gm, '<b>$1</b>')
+  .replace(/^(\s*)[-*] +/gm, '$1• ')
+  .replace(/\*(\S[^*\n]*?)\*/g, '<i>$1</i>');
+const md = s => s.trim().split('```').map((part, i) => i % 2
+  ? `<pre>${esc(part.replace(/^[^\n]*\n?/, '').trimEnd())}</pre>`     // код; первая строка — язык
+  : prose(part.replace(/^\n/, '').replace(/\n$/, ''))).join('');
+
+// --- Ключ: хранится только в этом браузере. Ссылка …/#key=<ключ> входит сразу — удобно для телефона.
+let key = '';
+try { key = localStorage.getItem('service-key') || ''; } catch {}
+const link = location.hash.match(/key=([^&]+)/);
+if (link) {
+  key = decodeURIComponent(link[1]);
+  history.replaceState(null, '', location.pathname);
+}
+
+function lock(message = '') {
+  document.body.classList.add('locked');
+  $('#gate-error').textContent = message;
+  $('#key').value = '';
+  $('#key').focus();
+}
+
+async function unlock(candidate) {
+  key = candidate.trim();
+  if (!key) return lock();
+  if (!await refresh()) return;
+  try { localStorage.setItem('service-key', key); } catch {}
+  document.body.classList.remove('locked');
+  $('#input').focus();
+}
+$('#gate form').onsubmit = e => { e.preventDefault(); unlock($('#key').value); };
+$('#logout').onclick = () => {
+  key = '';
+  try { localStorage.removeItem('service-key'); } catch {}
+  lock();
+};
+
+const api = (path, options = {}) => fetch(path, {
+  ...options, headers: {'Content-Type': 'application/json', Authorization: `Bearer ${key}`},
+});
+async function detail(res) {                 // текст ошибки сервиса: {"detail": "…"}
+  try {
+    const d = (await res.json()).detail;
+    return typeof d === 'string' ? d : JSON.stringify(d);
+  } catch { return `Ошибка ${res.status}`; }
+}
+async function* lines(res) {                 // ответ потоком — строки JSON
+  const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+  let rest = '';
+  for (let r; !(r = await reader.read()).done;) {
+    const parts = (rest + r.value).split('\n');
+    rest = parts.pop();
+    for (const part of parts) if (part.trim()) yield JSON.parse(part);
+  }
+}
+
+// --- Состояние сервера: модель, процессор, лимиты и очередь. Опрос раз в 3 с, во время проверки — раз в секунду.
+let status = null;
+async function refresh() {
+  if (!key) { lock(); return false; }
+  let res;
+  try { res = await api('/api/status'); } catch { status = null; show('Нет связи с сервером'); return false; }
+  if (res.status === 401) { status = null; lock('Ключ не подошёл'); return false; }
+  if (!res.ok) { show(`Сервер ответил ${res.status}`); return false; }
+  status = await res.json();
+  show();
+  return true;
+}
+
+function show(problem = '') {
+  const s = status;
+  problem ||= s && !s.ollama ? 'Ollama на сервере не отвечает' : '';
+  $('#status').classList.toggle('bad', Boolean(problem));
+  $('#where').textContent = problem || `${s.model} · ${s.loaded ? 'в памяти' : 'на диске'}`;
+  $('#engine').textContent = s?.ollama ? `Ollama ${s.ollama}` : '';
+  if (s) {
+    const m = s.machine, l = s.limits, n = s.now;
+    $('#machine').innerHTML = `${esc(m.cpu)} · ${m.threads} ${plural(m.threads, ['поток', 'потока', 'потоков'])}`
+      + ` · ${num(m.ram / 2 ** 30, 0)} ГБ · <b>процессор ${num(m.load, 0)} %</b>`;
+    const turn = l.parallel === 1 ? 'модель отвечает по одному' : `модель пишет ${l.parallel} ответа сразу`;
+    $('#tip-limits').innerHTML = `<li>${l.rate} запросов в минуту на ключ — сверх лимита 429 и сколько подождать</li>`
+      + `<li>${turn}, ещё до ${l.queue} ждут — дальше 503</li>`
+      + `<li>контекст ${num(l.context, 0)} токенов: переписка длиннее — 413, ничего не обрезается молча</li>`
+      + `<li>ответ — до ${l.answer} токенов</li>`;
+    sub('net', `${location.protocol === 'https:' ? 'HTTPS' : 'HTTP'} · вход по ключу`);
+    sub('load', `${turn}, ждут до ${l.queue}`);
+    sub('context', `лимит ${num(l.context, 0)} токенов, ответ до ${l.answer}`);
+    sub('rate', `${l.rate} в минуту на ключ · осталось ${n.left}${n.left ? '' : ` (ещё ${n.reset} с)`}`);
+    if (current?.id === 'load') result(current.row, `пишет ${n.writing} · ждут ${n.waiting}`, 'сейчас на сервере');
+  }
+  buttons();
+}
+
+// --- Чат: переписка живёт в браузере, модели уходят последние HISTORY сообщений.
+const msgs = $('.msgs'), input = $('#input'), go = $('#go');
+let dialog = [];                             // [{role, content}] — только удачные вопросы и ответы
+let asking = null;                           // идущий ответ: AbortController
+
+function bubble(role, html) {
+  $('.empty', msgs)?.remove();
+  const el = Object.assign(document.createElement('div'), {className: `msg ${role}`});
+  el.innerHTML = `<div class="text">${html}</div>`;
+  msgs.append(el);
+  msgs.scrollTop = msgs.scrollHeight;
+  return el;
+}
+
+async function send() {
+  const text = input.value.trim();
+  if (!text || asking) return;
+  input.value = '';
+  dialog.push({role: 'user', content: text});
+  bubble('user', esc(text));
+  const reply = bubble('model wait', ''), out = $('.text', reply);
+  const stats = reply.appendChild(Object.assign(document.createElement('div'), {className: 'stats'}));
+  asking = new AbortController();
+  buttons();
+  const started = performance.now();
+  let answer = '', ok = false;
+  const timer = setInterval(() => { if (!answer) stats.textContent = `ждёт очереди · ${secs(since(started))}`; }, 250);
+  try {
+    const res = await api('/api/chat', {method: 'POST', signal: asking.signal,
+      body: JSON.stringify({messages: dialog.slice(-HISTORY)})});
+    if (res.status === 401) lock('Ключ не подошёл');
+    if (!res.ok) throw new Error(await detail(res));
+    reply.classList.replace('wait', 'run');
+    for await (const event of lines(res)) {
+      if (event.type === 'text') {
+        answer += event.text;
+        out.innerHTML = md(answer);
+        stats.textContent = '';
+        msgs.scrollTop = msgs.scrollHeight;
+      } else if (event.type === 'done') {
+        ok = true;
+        const queue = event.queue >= 0.5 ? ` · ждал очереди ${secs(event.queue)}` : '';
+        stats.textContent = `${tokens(event.tokens)} · ${secs(since(started))} · ${num(event.speed)} токенов/сек${queue}`
+          + (event.cut ? ' · оборван лимитом ответа' : '');
+      } else if (event.type === 'error') throw new Error(event.text);
+    }
+    if (!ok) throw new Error('Ответ оборвался');
+    dialog.push({role: 'assistant', content: answer});
+  } catch (e) {
+    if (e.name === 'AbortError') stats.textContent = `остановлено · ${secs(since(started))}`;
+    else {
+      reply.classList.add('err');
+      out.textContent = e.message;
+    }
+    if (answer) dialog.push({role: 'assistant', content: answer});
+    else dialog.pop();                       // вопрос без ответа модели больше не отправляем
+  } finally {
+    clearInterval(timer);
+    reply.classList.remove('wait', 'run');
+    asking = null;
+    buttons();
+  }
+}
+go.onclick = () => asking ? asking.abort() : send();
+input.onkeydown = e => {
+  if (e.key !== 'Enter' || e.shiftKey) return;
+  e.preventDefault();
+  send();
+};
+$('#new').onclick = () => {
+  dialog = [];
+  msgs.innerHTML = '<div class="empty">Новый диалог — модель не помнит прежних сообщений</div>';
+  input.focus();
+};
+
+// --- Проверка: сеть, несколько запросов сразу, лимиты контекста и частоты.
+const CHECKS = [
+  {id: 'net', title: 'Доступ по сети', run: network},
+  {id: 'load', title: `Стабильность: ${LOAD.length} запросов сразу`, run: stability},
+  {id: 'context', title: 'Лимит контекста: длинный текст', run: context},
+  {id: 'rate', title: `Лимит частоты: ${BURST} запросов разом`, run: rate},
+];
+let checking = null;                         // идущая проверка: AbortController
+let current = null;                          // какая строка проверки идёт сейчас
+
+for (const c of CHECKS) {
+  c.row = $('#row').content.firstElementChild.cloneNode(true);
+  $('.what b', c.row).textContent = c.title;
+  $('.play', c.row).onclick = () => check([c]);
+  $('.api').before(c.row);
+}
+const sub = (id, text) => { $('.what span', CHECKS.find(c => c.id === id).row).textContent = text; };
+const result = (row, big, small) => { $('.big', row).innerHTML = `${esc(big)}<small>${esc(small)}</small>`; };
+
+function pill(row, state, text) {
+  const el = Object.assign(document.createElement('span'), {className: `pill ${state}`, textContent: text});
+  $('.pills', row).append(el);
+  return el;
+}
+
+async function probe(row, text, signal, expected) {
+  // Один запрос к модели: плашка «ждёт» → «пишет» → «✓ время» или код отказа. expected — ожидаемый отказ.
+  const el = pill(row, 'wait', 'ждёт'), started = performance.now();
+  let r;
+  try {
+    const res = await api('/api/chat', {method: 'POST', signal,
+      body: JSON.stringify({messages: [{role: 'user', content: text}]})});
+    if (!res.ok) r = {code: res.status, text: await detail(res)};
+    else {
+      el.className = 'pill run';
+      el.textContent = 'пишет';
+      let answer = '';
+      for await (const event of lines(res)) {
+        if (event.type === 'text') answer += event.text;
+        else if (event.type === 'error') throw new Error(event.text);
+      }
+      r = {code: 200, text: answer};
+    }
+  } catch (e) {
+    r = {code: e.name === 'AbortError' ? 'стоп' : 'сбой', text: e.message};
+  }
+  r.seconds = since(started);
+  el.className = `pill ${r.code === 200 ? 'ok' : r.code === expected ? 'limit' : 'bad'}`;
+  el.textContent = r.code === 200 ? `✓ ${secs(r.seconds)}` : r.code;
+  el.title = r.text;
+  return r;
+}
+
+async function network(row, signal) {
+  // Отклик — медиана пяти запросов состояния; потом запрос модели без ключа — сервис должен отказать.
+  const https = location.protocol === 'https:';
+  pill(row, https ? 'ok' : 'limit', https ? '✓ HTTPS' : 'HTTP');
+  const times = [];
+  for (let i = 0; i < 5; i++) {
+    const t = performance.now();
+    await (await api('/api/status', {signal})).json();
+    times.push(performance.now() - t);
+  }
+  const anon = await fetch('/api/chat', {method: 'POST', signal, headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({messages: [{role: 'user', content: 'Привет'}]})});
+  pill(row, anon.status === 401 ? 'limit' : 'bad', `без ключа — ${anon.status}`).title = await detail(anon);
+  result(row, `${Math.round(times.sort((a, b) => a - b)[2])} мс`, 'отклик сервера');
+}
+
+async function stability(row, signal) {
+  const all = await Promise.all(LOAD.map(q => probe(row, q, signal, null)));
+  const done = all.filter(r => r.code === 200).map(r => r.seconds);
+  result(row, `${done.length} из ${all.length}`,
+    done.length ? `ответили · ${secs(Math.min(...done))} – ${secs(Math.max(...done))}` : 'нет ответов');
+}
+
+async function context(row, signal) {
+  // Текст заведомо длиннее контекста: фраза — около 10 токенов, повторов — на полтора контекста.
+  const text = 'Правила дорожного движения устанавливают единый порядок дорожного движения. '
+    .repeat(Math.ceil(status.limits.context * 1.5 / 10));
+  const r = await probe(row, `${text}\nСколько здесь предложений?`, signal, 413);
+  const [count, limit] = r.code === 413 ? r.text.match(/\d+/g) : [];
+  result(row, String(r.code), count ? `${tokens(+count)} при лимите ${num(+limit, 0)}` : r.text);
+}
+
+async function rate(row, signal) {
+  const all = await Promise.all(Array.from({length: BURST}, () => probe(row, 'Ответь одним словом: да.', signal, 429)));
+  const refused = all.filter(r => r.code === 429), passed = all.filter(r => r.code === 200).length;
+  result(row, `${refused.length} × 429`, `прошли ${passed} — столько оставалось из ${status.limits.rate} за минуту`
+    + (refused.length ? ` · ${refused[0].text.split('— ').pop()}` : ''));
+}
+
+async function check(list) {
+  checking = new AbortController();
+  const fast = setInterval(refresh, 1000);
+  buttons();
+  try {
+    for (const c of list) {
+      if (checking.signal.aborted) break;
+      current = c;
+      $('.pills', c.row).innerHTML = $('.big', c.row).innerHTML = '';
+      try { await c.run(c.row, checking.signal); }
+      catch (e) { result(c.row, '—', e.name === 'AbortError' ? 'остановлено' : e.message); }
+    }
+  } finally {
+    clearInterval(fast);
+    checking = current = null;
+    refresh();
+  }
+}
+$('#all').onclick = () => checking ? checking.abort() : check(CHECKS);
+
+function buttons() {
+  const ready = Boolean(status?.ollama);
+  go.innerHTML = asking ? `${STOP}<span class="label"> Остановить</span>` : `${PLAY}<span class="label"> Отправить</span>`;
+  go.classList.toggle('stop', Boolean(asking));
+  go.disabled = !asking && !ready;
+  $('#new').disabled = Boolean(asking);
+  const all = $('#all');
+  all.textContent = checking ? `${STOP} Остановить` : `${PLAY} Проверить всё`;
+  all.classList.toggle('stop', Boolean(checking));
+  all.disabled = !checking && !ready;
+  for (const c of CHECKS) $('.play', c.row).disabled = Boolean(checking) || !ready;
+}
+
+// Запрос из терминала: на Windows — PowerShell 7 (кириллицу curl в консоли Windows портит), иначе curl.
+// На экране ключ скрыт, кнопка копирует команду с настоящим ключом.
+function command(secret) {
+  const body = '{"messages": [{"role": "user", "content": "Привет! Кто ты?"}], "stream": false}';
+  return navigator.userAgent.includes('Windows')
+    ? `$KEY = '${secret}'\nInvoke-RestMethod ${location.origin}/api/chat -NoProxy -Method Post `
+      + `-Headers @{Authorization = "Bearer $KEY"} -ContentType 'application/json; charset=utf-8' -Body '${body}'`
+    : `KEY='${secret}'\ncurl ${location.origin}/api/chat -H "Authorization: Bearer $KEY" --json '${body}'`;
+}
+$('#curl').textContent = command('••••••••');
+$('#copy').onclick = async () => {
+  await navigator.clipboard.writeText(command(key));
+  $('#copy').textContent = 'скопировано ✓';
+  setTimeout(() => { $('#copy').textContent = 'копировать с ключом'; }, 1500);
+};
+
+buttons();
+if (key) unlock(key);
+else lock();
+setInterval(() => { if (key && !checking) refresh(); }, 3000);
+</script>
+</body>
+</html>
